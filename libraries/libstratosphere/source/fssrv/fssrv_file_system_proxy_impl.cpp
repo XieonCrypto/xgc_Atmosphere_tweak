@@ -307,6 +307,10 @@ namespace ams::fssrv {
         AMS_ABORT("TODO");
     }
 
+    Result FileSystemProxyImpl::GetProgramId(ams::sf::Out<ncm::ProgramId> out_program_id, const fssrv::sf::FspPath &path, fs::ContentAttributes attr) {
+        AMS_ABORT("TODO");
+    }
+
     Result FileSystemProxyImpl::GetRightsIdByPath(ams::sf::Out<fs::RightsId> out, const fssrv::sf::FspPath &path) {
         AMS_ABORT("TODO");
     }
@@ -369,6 +373,10 @@ namespace ams::fssrv {
 
     /* ... */
 
+    Result FileSystemProxyImpl::GetAndClearErrorInfo(ams::sf::Out<fs::FileSystemProxyErrorInfo> out) {
+        AMS_ABORT("TODO");
+    }
+
     Result FileSystemProxyImpl::RegisterProgramIndexMapInfo(const ams::sf::InBuffer &buffer, s32 count) {
         AMS_ABORT("TODO");
     }
@@ -406,6 +414,10 @@ namespace ams::fssrv {
     }
 
     Result FileSystemProxyImpl::OpenRegisteredUpdatePartition(ams::sf::Out<ams::sf::SharedPointer<fssrv::sf::IFileSystem>> out) {
+        AMS_ABORT("TODO");
+    }
+
+    Result FileSystemProxyImpl::GetAndClearMemoryReportInfo(ams::sf::Out<fs::MemoryReportInfo> out) {
         AMS_ABORT("TODO");
     }
 
