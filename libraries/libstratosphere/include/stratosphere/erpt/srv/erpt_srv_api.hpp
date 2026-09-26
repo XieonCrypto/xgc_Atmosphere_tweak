@@ -21,7 +21,9 @@ namespace ams::erpt::srv {
     Result Initialize(u8 *mem, size_t mem_size);
     Result InitializeAndStartService();
 
-    Result SetSerialNumberAndOsVersion(const char *sn, u32 sn_len, const char *os, u32 os_len, const char *os_priv, u32 os_priv_len);
+    const SystemInfo &GetSystemInfo();
+
+    Result SetSerialNumber(const char *sn, u32 sn_len);
     Result SetProductModel(const char *model, u32 model_len);
     Result SetRegionSetting(const char *region, u32 region_len);
 

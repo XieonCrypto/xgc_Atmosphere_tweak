@@ -185,6 +185,11 @@ namespace ams::kern {
         /* Validate that the intended kernel version isn't too high for us to support. */
         R_UNLESS(m_capabilities.GetIntendedKernelVersion() <= ams::svc::SupportedKernelVersion, svc::ResultInvalidCombination());
 
+        /* Enable mapping device pages as executable on legacy processes. */
+        if (m_capabilities.GetIntendedKernelMajorVersion() < 26) {
+            m_page_table.GetBasePageTable().AllowDeviceMappingOfExecPages();
+        }
+
         /* Create and clear the process local region. */
         R_TRY(this->CreateThreadLocalRegion(std::addressof(m_plr_address)));
         m_plr_heap_address = this->GetThreadLocalRegionPointer(m_plr_address);
@@ -205,7 +210,7 @@ namespace ams::kern {
         m_program_id                = params.program_id;
         m_code_address              = params.code_address;
         m_code_size                 = params.code_num_pages * PageSize;
-        m_is_application            = (params.flags & ams::svc::CreateProcessFlag_IsApplication);
+        m_is_application            = (params.flags & ams::svc::CreateProcessParameterFlag_IsApplication);
         m_is_jit_debug              = false;
 
         #if defined(MESOSPHERE_ENABLE_PROCESS_CREATION_TIME)
@@ -220,18 +225,8 @@ namespace ams::kern {
             m_running_thread_switch_counts[i] = 0;
         }
 
-        /* Set max memory based on address space type. */
-        switch ((params.flags & ams::svc::CreateProcessFlag_AddressSpaceMask)) {
-            case ams::svc::CreateProcessFlag_AddressSpace32Bit:
-            case ams::svc::CreateProcessFlag_AddressSpace64BitDeprecated:
-            case ams::svc::CreateProcessFlag_AddressSpace64Bit:
-                m_max_process_memory = m_page_table.GetHeapRegionSize();
-                break;
-            case ams::svc::CreateProcessFlag_AddressSpace32BitWithoutAlias:
-                m_max_process_memory = m_page_table.GetHeapRegionSize() + m_page_table.GetAliasRegionSize();
-                break;
-            MESOSPHERE_UNREACHABLE_DEFAULT_CASE();
-        }
+        /* Set max memory. */
+        m_max_process_memory = KAddressSpaceInfo::GetAddressSpaceSize(static_cast<ams::svc::CreateProcessParameterFlag>(m_flags), KAddressSpaceInfo::Type_Heap);
 
         /* Generate random entropy. */
         KSystemControl::GenerateRandom(m_entropy, util::size(m_entropy));
@@ -269,6 +264,11 @@ namespace ams::kern {
         m_is_default_application_system_resource = false;
         m_is_immortal                            = immortal;
 
+        /* Reseed the random generator on application launch. */
+        if (params.flags & ams::svc::CreateProcessParameterFlag_IsApplication) {
+            KSystemControl::ReseedRandomGenerator();
+        }
+
         /* Setup our system resource. */
         if (const size_t system_resource_num_pages = params.system_resource_num_pages; system_resource_num_pages != 0) {
             /* Create a secure system resource. */
@@ -284,7 +284,7 @@ namespace ams::kern {
             m_system_resource = secure_resource;
         } else {
             /* Use the system-wide system resource. */
-            const bool is_app = (params.flags & ams::svc::CreateProcessFlag_IsApplication);
+            const bool is_app = (params.flags & ams::svc::CreateProcessParameterFlag_IsApplication);
             m_system_resource = std::addressof(is_app ? Kernel::GetApplicationSystemResource() : Kernel::GetSystemSystemResource());
 
             m_is_default_application_system_resource = is_app;
@@ -298,8 +298,8 @@ namespace ams::kern {
 
         /* Setup page table. */
         {
-            const bool from_back = (params.flags & ams::svc::CreateProcessFlag_EnableAslr) == 0;
-            R_TRY(m_page_table.Initialize(static_cast<ams::svc::CreateProcessFlag>(params.flags), from_back, pool, params.code_address, params.code_num_pages * PageSize, m_system_resource, res_limit));
+            const bool from_back = (params.flags & ams::svc::CreateProcessParameterFlag_EnableAslr) == 0;
+            R_TRY(m_page_table.Initialize(static_cast<ams::svc::CreateProcessParameterFlag>(params.flags), from_back, pool, params.code_address, params.code_num_pages * PageSize, m_system_resource, res_limit, this->GetSlabIndex()));
         }
         ON_RESULT_FAILURE_2 { m_page_table.Finalize(); };
 
@@ -337,6 +337,11 @@ namespace ams::kern {
         m_is_default_application_system_resource = false;
         m_is_immortal                            = false;
 
+        /* Reseed the random generator on application launch. */
+        if (params.flags & ams::svc::CreateProcessParameterFlag_IsApplication) {
+            KSystemControl::ReseedRandomGenerator();
+        }
+
         /* Get the memory sizes. */
         const size_t code_num_pages            = params.code_num_pages;
         const size_t system_resource_num_pages = params.system_resource_num_pages;
@@ -363,7 +368,7 @@ namespace ams::kern {
 
         } else {
             /* Use the system-wide system resource. */
-            const bool is_app = (params.flags & ams::svc::CreateProcessFlag_IsApplication);
+            const bool is_app = (params.flags & ams::svc::CreateProcessParameterFlag_IsApplication);
             m_system_resource = std::addressof(is_app ? Kernel::GetApplicationSystemResource() : Kernel::GetSystemSystemResource());
 
             m_is_default_application_system_resource = is_app;
@@ -377,8 +382,8 @@ namespace ams::kern {
 
         /* Setup page table. */
         {
-            const bool from_back = (params.flags & ams::svc::CreateProcessFlag_EnableAslr) == 0;
-            R_TRY(m_page_table.Initialize(static_cast<ams::svc::CreateProcessFlag>(params.flags), from_back, pool, params.code_address, code_size, m_system_resource, res_limit));
+            const bool from_back = (params.flags & ams::svc::CreateProcessParameterFlag_EnableAslr) == 0;
+            R_TRY(m_page_table.Initialize(static_cast<ams::svc::CreateProcessParameterFlag>(params.flags), from_back, pool, params.code_address, code_size, m_system_resource, res_limit, this->GetSlabIndex()));
         }
         ON_RESULT_FAILURE_2 { m_page_table.Finalize(); };
 
@@ -397,7 +402,7 @@ namespace ams::kern {
         MESOSPHERE_ABORT_UNLESS(m_process_id <= ProcessIdMax);
 
         /* If we should optimize memory allocations, do so. */
-        if (m_system_resource->IsSecureResource() && (params.flags & ams::svc::CreateProcessFlag_OptimizeMemoryAllocation) != 0) {
+        if (m_system_resource->IsSecureResource() && (params.flags & ams::svc::CreateProcessParameterFlag_OptimizeMemoryAllocation) != 0) {
             R_TRY(Kernel::GetMemoryManager().InitializeOptimizedMemory(m_process_id, pool));
         }
 
@@ -414,7 +419,7 @@ namespace ams::kern {
 
     void KProcess::DoWorkerTaskImpl() {
         /* Terminate child threads. */
-        TerminateChildren(this, nullptr);
+        MESOSPHERE_R_ABORT_UNLESS(TerminateChildren(this, nullptr));
 
         /* Finalize the handle table, if we're not immortal. */
         if (!m_is_immortal && m_is_handle_table_initialized) {
@@ -430,7 +435,7 @@ namespace ams::kern {
 
     Result KProcess::StartTermination() {
         /* Finalize the handle table when we're done, if the process isn't immortal. */
-        ON_SCOPE_EXIT {
+        ON_RESULT_SUCCESS {
             if (!m_is_immortal) {
                 this->FinalizeHandleTable();
             }
@@ -460,7 +465,7 @@ namespace ams::kern {
         }
     }
 
-    void KProcess::Exit() {
+    void KProcess::Exit(s64 exit_tag) {
         MESOSPHERE_ASSERT_THIS();
 
         /* Determine whether we need to start terminating. */
@@ -475,13 +480,14 @@ namespace ams::kern {
             MESOSPHERE_ASSERT(m_state != State_Terminated);
             if (m_state == State_Running || m_state == State_RunningAttached || m_state == State_DebugBreak) {
                 this->ChangeState(State_Terminating);
+                this->SetExitTag(exit_tag);
                 needs_terminate = true;
             }
         }
 
         /* If we need to start termination, do so. */
         if (needs_terminate) {
-            this->StartTermination();
+            static_cast<void>(this->StartTermination());
 
             /* Note for debug that we're exiting the process. */
             MESOSPHERE_LOG("KProcess::Exit() pid=%ld name=%-12s\n", m_process_id, m_name);
@@ -495,7 +501,7 @@ namespace ams::kern {
         MESOSPHERE_PANIC("Thread survived call to exit");
     }
 
-    Result KProcess::Terminate() {
+    Result KProcess::Terminate(s64 exit_tag) {
         MESOSPHERE_ASSERT_THIS();
 
         /* Determine whether we need to start terminating */
@@ -511,29 +517,33 @@ namespace ams::kern {
 
             if (m_state == State_Running || m_state == State_RunningAttached || m_state == State_Crashed || m_state == State_DebugBreak) {
                 this->ChangeState(State_Terminating);
+                this->SetExitTag(exit_tag);
                 needs_terminate = true;
             }
         }
 
         /* If we need to terminate, do so. */
         if (needs_terminate) {
-            /* Start termination. */
-            if (R_SUCCEEDED(this->StartTermination())) {
-                /* Note for debug that we're terminating the process. */
-                MESOSPHERE_LOG("KProcess::Terminate() OK pid=%ld name=%-12s\n", m_process_id, m_name);
-
-                /* Call the debug callback. */
-                KDebug::OnTerminateProcess(this);
-
-                /* Finish termination. */
-                this->FinishTermination();
-            } else {
+            /* If we fail to terminate, register as a worker task. */
+            ON_RESULT_FAILURE {
                 /* Note for debug that we're terminating the process. */
                 MESOSPHERE_LOG("KProcess::Terminate() FAIL pid=%ld name=%-12s\n", m_process_id, m_name);
 
                 /* Register the process as a work task. */
                 KWorkerTaskManager::AddTask(KWorkerTaskManager::WorkerType_ExitProcess, this);
-            }
+            };
+
+            /* Start termination. */
+            R_TRY(this->StartTermination());
+
+            /* Note for debug that we're terminating the process. */
+            MESOSPHERE_LOG("KProcess::Terminate() OK pid=%ld name=%-12s\n", m_process_id, m_name);
+
+            /* Call the debug callback. */
+            KDebug::OnTerminateProcess(this);
+
+            /* Finish termination. */
+            this->FinishTermination();
         }
 
         R_SUCCEED();
@@ -676,7 +686,7 @@ namespace ams::kern {
         R_SUCCEED();
     }
 
-    Result KProcess::DeleteThreadLocalRegion(KProcessAddress addr) {
+    void KProcess::DeleteThreadLocalRegion(KProcessAddress addr) {
         KThreadLocalPage *page_to_free = nullptr;
 
         /* Release the region. */
@@ -688,7 +698,7 @@ namespace ams::kern {
             if (it == m_partially_used_tlp_tree.end()) {
                 /* If we don't find it, it has to be in the fully used list. */
                 it = m_fully_used_tlp_tree.find_key(util::AlignDown(GetInteger(addr), PageSize));
-                R_UNLESS(it != m_fully_used_tlp_tree.end(), svc::ResultInvalidAddress());
+                MESOSPHERE_ABORT_UNLESS(it != m_fully_used_tlp_tree.end());
 
                 /* Release the region. */
                 it->Release(addr);
@@ -720,8 +730,6 @@ namespace ams::kern {
 
             KThreadLocalPage::Free(page_to_free);
         }
-
-        R_SUCCEED();
     }
 
     void *KProcess::GetThreadLocalRegionPointer(KProcessAddress addr) {
@@ -777,7 +785,7 @@ namespace ams::kern {
         MESOSPHERE_ASSERT(m_num_running_threads.Load() > 0);
 
         if (const auto prev = m_num_running_threads--; prev == 1) {
-            this->Terminate();
+            static_cast<void>(this->Terminate(-1ll));
         }
     }
 
@@ -934,7 +942,6 @@ namespace ams::kern {
         MESOSPHERE_ABORT_UNLESS(m_main_thread_stack_size == 0);
 
         /* Ensure that we're allocating a valid stack. */
-        stack_size = util::AlignUp(stack_size, PageSize);
         R_UNLESS(stack_size + m_code_size <= m_max_process_memory, svc::ResultOutOfMemory());
         R_UNLESS(stack_size + m_code_size >= m_code_size,          svc::ResultOutOfMemory());
 
@@ -975,6 +982,9 @@ namespace ams::kern {
         /* Initialize the thread. */
         R_TRY(KThread::InitializeUserThread(main_thread, reinterpret_cast<KThreadFunction>(GetVoidPointer(this->GetEntryPoint())), 0, stack_top, priority, m_ideal_core_id, this));
 
+        /* TODO: what is this? */
+        main_thread->SetDebugUnknown5(true);
+
         /* Register the thread, and commit our reservation. */
         KThread::Register(main_thread);
         thread_reservation.Commit();
@@ -985,6 +995,9 @@ namespace ams::kern {
 
         /* Set the thread arguments. */
         main_thread->GetContext().SetArguments(0, thread_handle);
+
+        /* Pass the thread handle to the thread local region. */
+        static_cast<ams::svc::ThreadLocalRegion *>(main_thread->GetThreadLocalRegionHeapAddress())->thread_handle = thread_handle;
 
         /* Update our state. */
         this->ChangeState((state == State_Created) ? State_Running : State_RunningAttached);
@@ -1191,7 +1204,7 @@ namespace ams::kern {
         MESOSPHERE_ASSERT(this == GetCurrentProcessPointer());
 
         /* If we aren't allowed to enter jit debug, don't. */
-        if ((m_flags & ams::svc::CreateProcessFlag_EnableDebug) == 0) {
+        if ((m_flags & ams::svc::CreateProcessParameterFlag_EnableJitDebug) == 0) {
             return false;
         }
 

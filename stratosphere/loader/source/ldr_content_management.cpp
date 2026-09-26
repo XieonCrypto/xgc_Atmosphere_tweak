@@ -18,53 +18,50 @@
 
 namespace ams::ldr {
 
-    namespace {
-
-        constinit os::SdkMutex g_scoped_code_mount_lock;
-
-    }
-
     /* ScopedCodeMount functionality. */
-    ScopedCodeMount::ScopedCodeMount(const ncm::ProgramLocation &loc) : m_lk(g_scoped_code_mount_lock), m_has_status(false), m_mounted_ams(false), m_mounted_sd_or_code(false), m_mounted_code(false) {
-        m_result = this->Initialize(loc);
+    ScopedCodeMount::ScopedCodeMount(const ncm::ProgramLocation &loc, const ldr::ProgramAttributes &attrs, os::SdkMutex &mutex, const char *ams, const char *sd_b, const char *b) : m_lk(mutex), m_ams_path(ams), m_sd_or_base_path(sd_b), m_base_path(b), m_has_status(false), m_mounted_ams(false), m_mounted_sd_or_code(false), m_mounted_code(false) {
+        m_result = this->Initialize(loc, attrs);
     }
 
-    ScopedCodeMount::ScopedCodeMount(const ncm::ProgramLocation &loc, const cfg::OverrideStatus &o) : m_lk(g_scoped_code_mount_lock), m_override_status(o), m_has_status(true), m_mounted_ams(false), m_mounted_sd_or_code(false), m_mounted_code(false) {
-        m_result = this->Initialize(loc);
+    ScopedCodeMount::ScopedCodeMount(const ncm::ProgramLocation &loc, const cfg::OverrideStatus &o, const ldr::ProgramAttributes &attrs, os::SdkMutex &mutex, const char *ams, const char *sd_b, const char *b) : m_lk(mutex), m_ams_path(ams), m_sd_or_base_path(sd_b), m_base_path(b), m_override_status(o), m_has_status(true), m_mounted_ams(false), m_mounted_sd_or_code(false), m_mounted_code(false) {
+        m_result = this->Initialize(loc, attrs);
     }
 
     ScopedCodeMount::~ScopedCodeMount() {
         /* Unmount filesystems. */
         if (m_mounted_ams) {
-            fs::Unmount(AtmosphereCodeMountName);
+            fs::Unmount(m_ams_path);
         }
         if (m_mounted_sd_or_code) {
-            fs::Unmount(SdOrCodeMountName);
+            fs::Unmount(m_sd_or_base_path);
         }
         if (m_mounted_code) {
-            fs::Unmount(CodeMountName);
+            fs::Unmount(m_base_path);
         }
     }
 
-    Result ScopedCodeMount::Initialize(const ncm::ProgramLocation &loc) {
+    Result ScopedCodeMount::Initialize(const ncm::ProgramLocation &loc, const ldr::ProgramAttributes &attrs) {
         /* Capture override status, if necessary. */
         this->EnsureOverrideStatus(loc);
         AMS_ABORT_UNLESS(m_has_status);
 
         /* Get the content path. */
         char content_path[fs::EntryNameLengthMax + 1];
-        R_TRY(GetProgramPath(content_path, sizeof(content_path), loc));
+        R_TRY(GetProgramPath(content_path, sizeof(content_path), loc, attrs));
+
+        /* Get the content attributes. */
+        const auto content_attributes = attrs.content_attributes;
 
         /* Mount the atmosphere code file system. */
-        R_TRY(fs::MountCodeForAtmosphereWithRedirection(std::addressof(m_ams_code_verification_data), AtmosphereCodeMountName, content_path, fs::ContentAttributes_None, loc.program_id, m_override_status.IsHbl(), m_override_status.IsProgramSpecific()));
+        R_TRY(fs::MountCodeForAtmosphereWithRedirection(std::addressof(m_ams_code_verification_data), m_ams_path, content_path, content_attributes, loc.program_id, static_cast<ncm::StorageId>(loc.storage_id), m_override_status.IsHbl(), m_override_status.IsProgramSpecific()));
         m_mounted_ams = true;
 
         /* Mount the sd or base code file system. */
-        R_TRY(fs::MountCodeForAtmosphere(std::addressof(m_sd_or_base_code_verification_data), SdOrCodeMountName, content_path, fs::ContentAttributes_None, loc.program_id));
+        R_TRY(fs::MountCodeForAtmosphere(std::addressof(m_sd_or_base_code_verification_data), m_sd_or_base_path, content_path, content_attributes, loc.program_id, static_cast<ncm::StorageId>(loc.storage_id)));
         m_mounted_sd_or_code = true;
 
         /* Mount the base code file system. */
-        if (R_SUCCEEDED(fs::MountCode(std::addressof(m_base_code_verification_data), CodeMountName, content_path, fs::ContentAttributes_None, loc.program_id))) {
+        if (R_SUCCEEDED(fs::MountCode(std::addressof(m_base_code_verification_data), m_base_path, content_path, content_attributes, loc.program_id, static_cast<ncm::StorageId>(loc.storage_id)))) {
             m_mounted_code = true;
         }
 
@@ -80,13 +77,17 @@ namespace ams::ldr {
     }
 
     /* Redirection API. */
-    Result GetProgramPath(char *out_path, size_t out_size, const ncm::ProgramLocation &loc) {
+    Result GetProgramPath(char *out_path, size_t out_size, const ncm::ProgramLocation &loc, const ldr::ProgramAttributes &attrs) {
         /* Check for storage id none. */
         if (static_cast<ncm::StorageId>(loc.storage_id) == ncm::StorageId::None) {
             std::memset(out_path, 0, out_size);
             std::memcpy(out_path, "/", std::min<size_t>(out_size, 2));
             R_SUCCEED();
         }
+
+        /* Get the content attributes. */
+        const auto content_attributes = attrs.content_attributes;
+        AMS_UNUSED(content_attributes);
 
         lr::Path path;
 

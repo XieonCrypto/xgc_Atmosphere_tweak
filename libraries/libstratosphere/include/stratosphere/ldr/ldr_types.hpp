@@ -19,6 +19,8 @@
 #include <stratosphere/ncm/ncm_ids.hpp>
 #include <stratosphere/ncm/ncm_program_location.hpp>
 #include <stratosphere/sf/sf_buffer_tags.hpp>
+#include <stratosphere/ncm/ncm_content_meta_platform.hpp>
+#include <stratosphere/fs/fs_content_attributes.hpp>
 
 namespace ams::ldr {
 
@@ -33,9 +35,10 @@ namespace ams::ldr {
         u32 aci_sac_size;
         u32 acid_fac_size;
         u32 aci_fah_size;
+        u8 unused_20[0x10];
         u8 ac_buffer[0x3E0];
     };
-    static_assert(util::is_pod<ProgramInfo>::value && sizeof(ProgramInfo) == 0x400, "ProgramInfo definition!");
+    static_assert(util::is_pod<ProgramInfo>::value && sizeof(ProgramInfo) == 0x410, "ProgramInfo definition!");
 
     enum ProgramInfoFlag {
         ProgramInfoFlag_SystemModule        = (0 << 0),
@@ -47,9 +50,9 @@ namespace ams::ldr {
         ProgramInfoFlag_AllowDebug = (1 << 2),
     };
 
-    enum CreateProcessFlag {
-        CreateProcessFlag_EnableDebug = (1 << 0),
-        CreateProcessFlag_DisableAslr = (1 << 1),
+    enum CreateProcessParameterFlag {
+        CreateProcessParameterFlag_EnableJitDebug = (1 << 0),
+        CreateProcessParameterFlag_DisableAslr    = (1 << 1),
     };
 
     struct ProgramArguments {
@@ -91,12 +94,14 @@ namespace ams::ldr {
         };
 
         enum Flag : u32 {
-            Flag_CompressedText = (1 << 0),
-            Flag_CompressedRo   = (1 << 1),
-            Flag_CompressedRw   = (1 << 2),
-            Flag_CheckHashText     = (1 << 3),
-            Flag_CheckHashRo       = (1 << 4),
-            Flag_CheckHashRw       = (1 << 5),
+            Flag_CompressedText     = (1 << 0),
+            Flag_CompressedRo       = (1 << 1),
+            Flag_CompressedRw       = (1 << 2),
+            Flag_CheckHashText      = (1 << 3),
+            Flag_CheckHashRo        = (1 << 4),
+            Flag_CheckHashRw        = (1 << 5),
+            Flag_PreventCodeReads   = (1 << 6),
+            Flag_UseZbicCompression = (1 << 7),
         };
 
         struct SegmentInfo {
@@ -177,6 +182,8 @@ namespace ams::ldr {
 
             AcidFlag_PoolPartitionShift = 2,
             AcidFlag_PoolPartitionMask = (0xF << AcidFlag_PoolPartitionShift),
+
+            AcidFlag_LoadBrowserCoreDll = (1 << 7),
         };
 
         enum PoolPartition {
@@ -187,10 +194,10 @@ namespace ams::ldr {
         };
 
         #if defined(ATMOSPHERE_OS_HORIZON)
-            static_assert(PoolPartition_Application     == (svc::CreateProcessFlag_PoolPartitionApplication     >> svc::CreateProcessFlag_PoolPartitionShift));
-            static_assert(PoolPartition_Applet          == (svc::CreateProcessFlag_PoolPartitionApplet          >> svc::CreateProcessFlag_PoolPartitionShift));
-            static_assert(PoolPartition_System          == (svc::CreateProcessFlag_PoolPartitionSystem          >> svc::CreateProcessFlag_PoolPartitionShift));
-            static_assert(PoolPartition_SystemNonSecure == (svc::CreateProcessFlag_PoolPartitionSystemNonSecure >> svc::CreateProcessFlag_PoolPartitionShift));
+            static_assert(PoolPartition_Application     == (svc::CreateProcessParameterFlag_PoolPartitionApplication     >> svc::CreateProcessParameterFlag_PoolPartitionShift));
+            static_assert(PoolPartition_Applet          == (svc::CreateProcessParameterFlag_PoolPartitionApplet          >> svc::CreateProcessParameterFlag_PoolPartitionShift));
+            static_assert(PoolPartition_System          == (svc::CreateProcessParameterFlag_PoolPartitionSystem          >> svc::CreateProcessParameterFlag_PoolPartitionShift));
+            static_assert(PoolPartition_SystemNonSecure == (svc::CreateProcessParameterFlag_PoolPartitionSystemNonSecure >> svc::CreateProcessParameterFlag_PoolPartitionShift));
         #endif
 
         u8 signature[0x100];
@@ -216,35 +223,43 @@ namespace ams::ldr {
     struct Npdm {
         static constexpr u32 Magic = util::FourCC<'M','E','T','A'>::Code;
 
-        enum MetaFlag {
-            MetaFlag_Is64Bit = (1 << 0),
+        enum MetaFlag0 {
+            MetaFlag0_Is64BitInstruction             = (1 << 0),
 
-            MetaFlag_AddressSpaceTypeShift = 1,
-            MetaFlag_AddressSpaceTypeMask = (7 << MetaFlag_AddressSpaceTypeShift),
+            MetaFlag0_ProcessAddressSpaceShift       = 1,
+            MetaFlag0_ProcessAddressSpaceMask        = (7 << MetaFlag0_ProcessAddressSpaceShift),
 
-            MetaFlag_OptimizeMemoryAllocation       = (1 << 4),
-            MetaFlag_DisableDeviceAddressSpaceMerge = (1 << 5),
+            MetaFlag0_OptimizeMemoryAllocation       = (1 << 4),
+            MetaFlag0_DisableDeviceAddressSpaceMerge = (1 << 5),
+            MetaFlag0_EnableAddressSanitizer         = (1 << 6),
+            MetaFlag0_PreventCodeReads               = (1 << 7),
         };
 
-        enum AddressSpaceType {
-            AddressSpaceType_32Bit              = 0,
-            AddressSpaceType_64BitDeprecated    = 1,
-            AddressSpaceType_32BitWithoutAlias  = 2,
-            AddressSpaceType_64Bit              = 3,
+        enum MetaFlag1 {
+            MetaFlag1_EnableShadowStack = (1 << 0),
+        };
+
+        enum ProcessAddressSpace {
+            ProcessAddressSpace_32Bit           = 0,
+            ProcessAddressSpace_64Bit36         = 1,
+            ProcessAddressSpace_32BitNoReserved = 2,
+            ProcessAddressSpace_64Bit39         = 3,
+            ProcessAddressSpace_64Bit42         = 4,
         };
 
         #if defined(ATMOSPHERE_OS_HORIZON)
-            static_assert(AddressSpaceType_32Bit              == (svc::CreateProcessFlag_AddressSpace32Bit             >> svc::CreateProcessFlag_AddressSpaceShift));
-            static_assert(AddressSpaceType_64BitDeprecated    == (svc::CreateProcessFlag_AddressSpace64BitDeprecated   >> svc::CreateProcessFlag_AddressSpaceShift));
-            static_assert(AddressSpaceType_32BitWithoutAlias  == (svc::CreateProcessFlag_AddressSpace32BitWithoutAlias >> svc::CreateProcessFlag_AddressSpaceShift));
-            static_assert(AddressSpaceType_64Bit              == (svc::CreateProcessFlag_AddressSpace64Bit             >> svc::CreateProcessFlag_AddressSpaceShift));
+            static_assert(ProcessAddressSpace_32Bit           == (svc::CreateProcessParameterFlag_AddressSpace32Bit           >> svc::CreateProcessParameterFlag_AddressSpaceShift));
+            static_assert(ProcessAddressSpace_64Bit36         == (svc::CreateProcessParameterFlag_AddressSpace64Bit36         >> svc::CreateProcessParameterFlag_AddressSpaceShift));
+            static_assert(ProcessAddressSpace_32BitNoReserved == (svc::CreateProcessParameterFlag_AddressSpace32BitNoReserved >> svc::CreateProcessParameterFlag_AddressSpaceShift));
+            static_assert(ProcessAddressSpace_64Bit39         == (svc::CreateProcessParameterFlag_AddressSpace64Bit39         >> svc::CreateProcessParameterFlag_AddressSpaceShift));
+            static_assert(ProcessAddressSpace_64Bit42         == (svc::CreateProcessParameterFlag_AddressSpace64Bit42         >> svc::CreateProcessParameterFlag_AddressSpaceShift));
         #endif
 
         u32 magic;
         u32 signature_key_generation;
         u8  reserved_08[4];
-        u8  flags;
-        u8  reserved_0D;
+        u8  flags0;
+        u8  flags1;
         u8 main_thread_priority;
         u8 default_cpu_id;
         u8  reserved_10[4];
@@ -260,5 +275,11 @@ namespace ams::ldr {
         u32 acid_size;
     };
     static_assert(sizeof(Npdm) == 0x80 && util::is_pod<Npdm>::value, "Npdm definition!");
+
+    struct ProgramAttributes {
+        ncm::ContentMetaPlatform platform;
+        fs::ContentAttributes content_attributes;
+    };
+    static_assert(sizeof(ProgramAttributes) == 2 && util::is_pod<ProgramAttributes>::value, "ProgramAttributes definition!");
 
 }

@@ -26,7 +26,7 @@ namespace ams::kern::board::nintendo::nx {
         constexpr size_t SecureSizeMax = util::AlignDown(512_MB - 1, SecureAlignment);
 
         /* Global variables for panic. */
-        constinit bool g_call_smc_on_panic;
+        constinit const volatile bool g_call_smc_on_panic = false;
 
         /* Global variables for secure memory. */
         constinit KSpinLock g_secure_applet_lock;
@@ -71,12 +71,6 @@ namespace ams::kern::board::nintendo::nx {
         ALWAYS_INLINE u64 GenerateRandomU64ForInit() {
             u64 value;
             smc::init::GenerateRandomBytes(std::addressof(value), sizeof(value));
-            return value;
-        }
-
-        ALWAYS_INLINE u64 GenerateRandomU64FromSmc() {
-            u64 value;
-            smc::GenerateRandomBytes(std::addressof(value), sizeof(value));
             return value;
         }
 
@@ -361,8 +355,18 @@ namespace ams::kern::board::nintendo::nx {
         }();
 
         /* Return (possibly) adjusted size. */
-        constexpr size_t ExtraSystemMemoryForAtmosphere = 40_MB;
-        return base_pool_size - ExtraSystemMemoryForAtmosphere - KTraceBufferSize;
+        /* NOTE: On 20.0.0+ (and even more-so 21.0.0+) the browser requires much more memory in the applet pool in order to function. */
+        /* Thus, we have to reduce our extra system memory size by 26 MB to compensate. */
+        if (kern::GetTargetFirmware() >= ams::TargetFirmware_21_0_0) {
+            constexpr size_t ExtraSystemMemoryForAtmosphere_21_0_0 = 7_MB;
+            return base_pool_size - ExtraSystemMemoryForAtmosphere_21_0_0 - KTraceBufferSize;
+        } else if (kern::GetTargetFirmware() >= ams::TargetFirmware_20_0_0) {
+            constexpr size_t ExtraSystemMemoryForAtmosphere_20_0_0 = 14_MB;
+            return base_pool_size - ExtraSystemMemoryForAtmosphere_20_0_0 - KTraceBufferSize;
+        } else {
+            constexpr size_t ExtraSystemMemoryForAtmosphere = 40_MB;
+            return base_pool_size - ExtraSystemMemoryForAtmosphere - KTraceBufferSize;
+        }
     }
 
     size_t KSystemControl::Init::GetMinimumNonSecureSystemPoolSize() {
@@ -401,42 +405,78 @@ namespace ams::kern::board::nintendo::nx {
     }
 
     /* System Initialization. */
-    void KSystemControl::InitializePhase1() {
+    void KSystemControl::ConfigureKTargetSystem() {
         /* Configure KTargetSystem. */
+        volatile auto *ts = const_cast<volatile KTargetSystem::KTargetSystemData *>(std::addressof(KTargetSystem::s_data));
         {
-            /* Set IsDebugMode. */
+            /* Set whether we're in debug mode. */
             {
-                KTargetSystem::SetIsDebugMode(GetConfigBool(smc::ConfigItem::IsDebugMode));
+                ts->is_not_debug_mode     = !GetConfigBool(smc::ConfigItem::IsDebugMode);
+                
+                /* TODO: 23.0.0+ split debug mode into 2 fields. Implement this properly for better accuracy. */
+                ts->is_not_debug_mode2    = ts->is_not_debug_mode;
 
-                /* If debug mode, we want to initialize uart logging. */
-                KTargetSystem::EnableDebugLogging(KTargetSystem::IsDebugMode());
+                /* If we're not in debug mode, we don't want to initialize uart logging. */
+                ts->disable_debug_logging = ts->is_not_debug_mode;
             }
 
             /* Set Kernel Configuration. */
             {
                 const auto kernel_config = util::BitPack32{GetConfigU32(smc::ConfigItem::KernelConfiguration)};
 
-                KTargetSystem::EnableDebugMemoryFill(kernel_config.Get<smc::KernelConfiguration::DebugFillMemory>());
-                KTargetSystem::EnableUserExceptionHandlers(kernel_config.Get<smc::KernelConfiguration::EnableUserExceptionHandlers>());
-                KTargetSystem::EnableDynamicResourceLimits(!kernel_config.Get<smc::KernelConfiguration::DisableDynamicResourceLimits>());
-                KTargetSystem::EnableUserPmuAccess(kernel_config.Get<smc::KernelConfiguration::EnableUserPmuAccess>());
+                ts->disable_debug_memory_fill       = !kernel_config.Get<smc::KernelConfiguration::DebugFillMemory>();
+                ts->disable_user_exception_handlers = !kernel_config.Get<smc::KernelConfiguration::EnableUserExceptionHandlers>();
+                ts->disable_dynamic_resource_limits = kernel_config.Get<smc::KernelConfiguration::DisableDynamicResourceLimits>();
+                ts->disable_user_pmu_access         = !kernel_config.Get<smc::KernelConfiguration::EnableUserPmuAccess>();
 
-                g_call_smc_on_panic = kernel_config.Get<smc::KernelConfiguration::UseSecureMonitorPanicCall>();
+                /* Configure call smc on panic. */
+                *const_cast<volatile bool *>(std::addressof(g_call_smc_on_panic)) = kernel_config.Get<smc::KernelConfiguration::UseSecureMonitorPanicCall>();
             }
 
             /* Set Kernel Debugging. */
             {
                 /* NOTE: This is used to restrict access to SvcKernelDebug/SvcChangeKernelTraceState. */
                 /* Mesosphere may wish to not require this, as we'd ideally keep ProgramVerification enabled for userland. */
-                KTargetSystem::EnableKernelDebugging(GetConfigBool(smc::ConfigItem::DisableProgramVerification));
+                ts->disable_kernel_debugging = !GetConfigBool(smc::ConfigItem::DisableProgramVerification);
+            }
+        }
+    }
+
+    void KSystemControl::InitializePhase1() {
+        /* Enable KTargetSystem. */
+        KTargetSystem::SetInitialized();
+
+        /* Check KTargetSystem was configured correctly. */
+        {
+            /* Check IsDebugMode. */
+            {
+                MESOSPHERE_ABORT_UNLESS(KTargetSystem::IsDebugMode() == GetConfigBool(smc::ConfigItem::IsDebugMode));
+                MESOSPHERE_ABORT_UNLESS(KTargetSystem::IsDebugLoggingEnabled() == GetConfigBool(smc::ConfigItem::IsDebugMode));
+            }
+
+            /* Check Kernel Configuration. */
+            {
+                const auto kernel_config = util::BitPack32{GetConfigU32(smc::ConfigItem::KernelConfiguration)};
+
+                MESOSPHERE_ABORT_UNLESS(KTargetSystem::IsDebugMemoryFillEnabled() == kernel_config.Get<smc::KernelConfiguration::DebugFillMemory>());
+                MESOSPHERE_ABORT_UNLESS(KTargetSystem::IsUserExceptionHandlersEnabled() == kernel_config.Get<smc::KernelConfiguration::EnableUserExceptionHandlers>());
+                MESOSPHERE_ABORT_UNLESS(KTargetSystem::IsDynamicResourceLimitsEnabled() == !kernel_config.Get<smc::KernelConfiguration::DisableDynamicResourceLimits>());
+                MESOSPHERE_ABORT_UNLESS(KTargetSystem::IsUserPmuAccessEnabled() == kernel_config.Get<smc::KernelConfiguration::EnableUserPmuAccess>());
+
+                MESOSPHERE_ABORT_UNLESS(g_call_smc_on_panic == kernel_config.Get<smc::KernelConfiguration::UseSecureMonitorPanicCall>());
+            }
+
+            /* Check Kernel Debugging. */
+            {
+                MESOSPHERE_ABORT_UNLESS(KTargetSystem::IsKernelDebuggingEnabled() == GetConfigBool(smc::ConfigItem::DisableProgramVerification));
             }
         }
 
         /* Initialize random and resource limit. */
         {
-            u64 seed;
-            smc::GenerateRandomBytes(std::addressof(seed), sizeof(seed));
-            KSystemControlBase::InitializePhase1Base(seed);
+            u8 seed[32];
+            smc::GenerateRandomBytes(seed, sizeof(seed));
+            KSystemControlBase::InitializePhase1Base(seed, sizeof(seed));
         }
 
         /* Configure the Kernel Carveout region. */
@@ -481,32 +521,8 @@ namespace ams::kern::board::nintendo::nx {
     }
 
     /* Randomness. */
-    void KSystemControl::GenerateRandom(u64 *dst, size_t count) {
-        MESOSPHERE_INIT_ABORT_UNLESS(count <= 7);
-        smc::GenerateRandomBytes(dst, count * sizeof(u64));
-    }
-
-    u64 KSystemControl::GenerateRandomRange(u64 min, u64 max) {
-        KScopedInterruptDisable intr_disable;
-        KScopedSpinLock lk(s_random_lock);
-
-
-        if (AMS_LIKELY(s_initialized_random_generator)) {
-            return KSystemControlBase::GenerateUniformRange(min, max, []() ALWAYS_INLINE_LAMBDA -> u64 { return s_random_generator.GenerateRandomU64(); });
-        } else {
-            return KSystemControlBase::GenerateUniformRange(min, max, GenerateRandomU64FromSmc);
-        }
-    }
-
-    u64 KSystemControl::GenerateRandomU64() {
-        KScopedInterruptDisable intr_disable;
-        KScopedSpinLock lk(s_random_lock);
-
-        if (AMS_LIKELY(s_initialized_random_generator)) {
-            return s_random_generator.GenerateRandomU64();
-        } else {
-            return GenerateRandomU64FromSmc();
-        }
+    void KSystemControl::GenerateRandomBytesForUninitialized(void *dst, size_t size) {
+        smc::GenerateRandomBytes(dst, size);
     }
 
     void KSystemControl::SleepSystem() {
@@ -590,13 +606,8 @@ namespace ams::kern::board::nintendo::nx {
                 for (size_t i = 0; i < RebootPayloadSize / sizeof(u32); ++i) {
                     GetPointer<volatile u32>(iram_address)[i] = GetPointer<volatile u32>(reboot_payload)[i];
                 }
-
-                /* Reboot. */
-                smc::SetConfig(smc::ConfigItem::ExosphereNeedsReboot, smc::UserRebootType_ToPayload);
-            } else {
-                /* If we don't have a payload, reboot to rcm. */
-                smc::SetConfig(smc::ConfigItem::ExosphereNeedsReboot, smc::UserRebootType_ToRcm);
             }
+            smc::SetConfig(smc::ConfigItem::ExosphereNeedsReboot, smc::UserRebootType_ToFatalError);
         }
 
         if (g_call_smc_on_panic) {

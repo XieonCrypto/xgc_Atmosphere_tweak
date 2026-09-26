@@ -34,7 +34,7 @@ ATMOSPHERE_OPTIMIZATION_FLAG := -O2
 endif
 
 DEFINES	    := $(ATMOSPHERE_DEFINES) -DATMOSPHERE_IS_STRATOSPHERE -D_GNU_SOURCE
-SETTINGS    := $(ATMOSPHERE_SETTINGS) $(ATMOSPHERE_OPTIMIZATION_FLAG) -Wextra -Werror -Wno-missing-field-initializers -flto
+SETTINGS    := $(ATMOSPHERE_SETTINGS) $(ATMOSPHERE_OPTIMIZATION_FLAG) -Wextra -Werror -Wno-missing-field-initializers -flto -Wno-error=unused-result
 CFLAGS      := $(ATMOSPHERE_CFLAGS) $(SETTINGS) $(DEFINES) $(INCLUDE)
 CXXFLAGS    := $(CFLAGS) $(ATMOSPHERE_CXXFLAGS)
 ASFLAGS     := $(ATMOSPHERE_ASFLAGS) $(SETTINGS) $(DEFINES)
@@ -118,7 +118,7 @@ clean:
 	@echo clean $(ATMOSPHERE_BUILD_NAME) ...
 	@rm -fr $(ATMOSPHERE_BUILD_DIR) $(ATMOSPHERE_OUT_DIR)
 	@rm -fr $(foreach hdr,$(GCH_DIRS),$(hdr)/$(ATMOSPHERE_GCH_IDENTIFIER))
-	@for i in $(GCH_DIRS); do [ -d $$i ] && rmdir --ignore-fail-on-non-empty $$i || true; done
+	@for i in $(GCH_DIRS); do [ -d $$i ] && rmdir $$i 2>/dev/null || true; done
 
 $(ATMOSPHERE_LIBRARY_DIR) $(ATMOSPHERE_BUILD_DIR) $(GCH_DIRS):
 	@[ -d $@ ] || mkdir -p $@
@@ -154,12 +154,14 @@ spl_secure_monitor_api.os.generic.o: CXXFLAGS += -I$(ATMOSPHERE_LIBRARIES_DIR)/l
 fs_id_string_impl.os.generic.o: CXXFLAGS += -I$(ATMOSPHERE_LIBRARIES_DIR)/libexosphere/include
 
 ifeq ($(ATMOSPHERE_OS_NAME),windows)
-# I do not remember why these had fno-lto, but it appears to
-# work without no-lto (2023/03/09), so I am disabling these. I may regret this later.
-#os_%.o: CXXFLAGS += -fno-lto
-#fssystem_%.o: CXXFLAGS += -fno-lto
-#fssrv_%.o: CXXFLAGS += -fno-lto
-#fs_%.o: CXXFLAGS += -fno-lto
+# Audit builds fail when these have lto disabled.
+# Noting 10/29/24:
+# In member function '__ct ':
+# internal compiler error: in binds_to_current_def_p, at symtab.cc:2589
+os_%.o: CXXFLAGS += -fno-lto
+fssystem_%.o: CXXFLAGS += -fno-lto
+fssrv_%.o: CXXFLAGS += -fno-lto
+fs_%.o: CXXFLAGS += -fno-lto
 endif
 
 #---------------------------------------------------------------------------------

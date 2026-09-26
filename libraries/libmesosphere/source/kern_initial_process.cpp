@@ -140,14 +140,12 @@ namespace ams::kern {
 
                         /* Add the previously reserved pages. */
                         if (src_pool == dst_pool && binary_pages != 0) {
-                            /* NOTE: Nintendo does not check the result of this operation. */
-                            pg.AddBlock(KMemoryLayout::GetLinearPhysicalAddress(data), binary_pages);
+                            MESOSPHERE_R_ABORT_UNLESS(pg.AddBlock(KMemoryLayout::GetLinearPhysicalAddress(data), binary_pages));
                         }
 
                         /* Add the previously unreserved pages. */
                         for (const auto &block : unreserve_pg) {
-                            /* NOTE: Nintendo does not check the result of this operation. */
-                            pg.AddBlock(block.GetAddress(), block.GetNumPages());
+                            MESOSPHERE_R_ABORT_UNLESS(pg.AddBlock(block.GetAddress(), block.GetNumPages()));
                         }
                     }
                     MESOSPHERE_ABORT_UNLESS(pg.GetNumPages() == static_cast<size_t>(params.code_num_pages));
@@ -287,7 +285,7 @@ namespace ams::kern {
             MESOSPHERE_INIT_ABORT_UNLESS(expected_size != 0);
 
             /* Ensure that the size we need to reserve is as we expect it to be. */
-            const size_t total_size = util::AlignUp(g_initial_process_binary_header.size, PageSize);
+            const u32 total_size = util::AlignUp(g_initial_process_binary_header.size, PageSize);
             MESOSPHERE_ABORT_UNLESS(total_size == expected_size);
             MESOSPHERE_ABORT_UNLESS(total_size <= InitialProcessBinarySizeMax);
 

@@ -21,6 +21,15 @@ namespace ams::kern::arch::arm64 {
     void UserModeThreadStarter();
     void SupervisorModeThreadStarter();
 
+    void InvokeSupervisorModeThread(uintptr_t argument, uintptr_t entrypoint) {
+        /* Invoke the function. */
+        using SupervisorModeFunctionType = void (*)(uintptr_t);
+        reinterpret_cast<SupervisorModeFunctionType>(entrypoint)(argument);
+
+        /* Wait forever. */
+        AMS_INFINITE_LOOP();
+    }
+
     void OnThreadStart() {
         MESOSPHERE_ASSERT(!KInterruptManager::AreInterruptsEnabled());
         /* Send KDebug event for this thread's creation. */
@@ -28,7 +37,7 @@ namespace ams::kern::arch::arm64 {
             KScopedInterruptEnable ei;
 
             const uintptr_t params[2] = { GetCurrentThread().GetId(), GetInteger(GetCurrentThread().GetThreadLocalRegionAddress()) };
-            KDebug::OnDebugEvent(ams::svc::DebugEvent_CreateThread, params, util::size(params));
+            static_cast<void>(KDebug::OnDebugEvent(ams::svc::DebugEvent_CreateThread, params, util::size(params)));
         }
 
         /* Handle any pending dpc. */
@@ -107,7 +116,7 @@ namespace ams::kern::arch::arm64 {
 
     }
 
-    Result KThreadContext::Initialize(KVirtualAddress u_pc, KVirtualAddress k_sp, KVirtualAddress u_sp, uintptr_t arg, bool is_user, bool is_64_bit, bool is_main) {
+    void KThreadContext::Initialize(KVirtualAddress u_pc, KVirtualAddress k_sp, KVirtualAddress u_sp, uintptr_t arg, bool is_user, bool is_64_bit, bool is_main) {
         MESOSPHERE_ASSERT(k_sp != Null<KVirtualAddress>);
 
         /* Ensure that the stack pointers are aligned. */
@@ -148,8 +157,6 @@ namespace ams::kern::arch::arm64 {
 
         /* Lock the context, if we're a main thread. */
         m_locked = is_main;
-
-        R_SUCCEED();
     }
 
     void KThreadContext::SetArguments(uintptr_t arg0, uintptr_t arg1) {

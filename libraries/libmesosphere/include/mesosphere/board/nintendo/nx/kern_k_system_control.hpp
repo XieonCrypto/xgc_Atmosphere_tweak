@@ -45,14 +45,13 @@ namespace ams::kern::board::nintendo::nx {
             };
         public:
             /* Initialization. */
+            static NOINLINE void ConfigureKTargetSystem();
             static NOINLINE void InitializePhase1();
             static NOINLINE void InitializePhase2();
             static NOINLINE u32 GetCreateProcessMemoryPool();
 
             /* Randomness. */
-            static void GenerateRandom(u64 *dst, size_t count);
-            static u64  GenerateRandomRange(u64 min, u64 max);
-            static u64  GenerateRandomU64();
+            static void GenerateRandomBytesForUninitialized(void *dst, size_t size);
 
             /* Privileged Access. */
             static void ReadWriteRegisterPrivileged(u32 *out, ams::svc::PhysicalAddress address, u32 mask, u32 value);

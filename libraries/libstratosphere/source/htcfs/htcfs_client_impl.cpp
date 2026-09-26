@@ -53,7 +53,7 @@ namespace ams::htcfs {
 
     void ClientImpl::Start() {
         /* Create our thread. */
-        os::CreateThread(std::addressof(m_monitor_thread), ThreadEntry, this, g_monitor_thread_stack, sizeof(g_monitor_thread_stack), AMS_GET_SYSTEM_THREAD_PRIORITY(htc, HtcfsMonitor));
+        R_ABORT_UNLESS(os::CreateThread(std::addressof(m_monitor_thread), ThreadEntry, this, g_monitor_thread_stack, sizeof(g_monitor_thread_stack), AMS_GET_SYSTEM_THREAD_PRIORITY(htc, HtcfsMonitor)));
 
         /* Set thread name pointer. */
         os::SetThreadNamePointer(std::addressof(m_monitor_thread), AMS_GET_SYSTEM_THREAD_NAME(htc, HtcfsMonitor));
@@ -532,8 +532,8 @@ namespace ams::htcfs {
         Header request, response;
 
         /* Create header for the request. */
-        const auto old_path_len = std::strlen(new_path);
-        const auto new_path_len = std::strlen(old_path);
+        const auto old_path_len = std::strlen(old_path);
+        const auto new_path_len = std::strlen(new_path);
         m_header_factory.MakeRenameFileHeader(std::addressof(request), old_path_len, new_path_len, case_sensitive);
 
         /* Send the request to the host. */
@@ -734,8 +734,8 @@ namespace ams::htcfs {
         Header request, response;
 
         /* Create header for the request. */
-        const auto old_path_len = std::strlen(new_path);
-        const auto new_path_len = std::strlen(old_path);
+        const auto old_path_len = std::strlen(old_path);
+        const auto new_path_len = std::strlen(new_path);
         m_header_factory.MakeRenameDirectoryHeader(std::addressof(request), old_path_len, new_path_len, case_sensitive);
 
         /* Send the request to the host. */

@@ -109,6 +109,15 @@ namespace ams::kern::svc {
                 case ams::svc::InfoType_AliasRegionExtraSize:
                     *out = process->GetPageTable().GetAliasRegionExtraSize();
                     break;
+                case ams::svc::InfoType_AddressSpaceSize:
+                    *out = process->GetAddressSpaceSize();
+                    break;
+                case ams::svc::InfoType_ShadowStackRegionAddress:
+                    *out = GetInteger(process->GetPageTable().GetShadowStackRegionStart());
+                    break;
+                case ams::svc::InfoType_ShadowStackRegionSize:
+                    *out = process->GetPageTable().GetShadowStackRegionSize();
+                    break;
                 MESOSPHERE_UNREACHABLE_DEFAULT_CASE();
             }
 
@@ -138,6 +147,9 @@ namespace ams::kern::svc {
                 case ams::svc::InfoType_IsApplication:
                 case ams::svc::InfoType_FreeThreadCount:
                 case ams::svc::InfoType_AliasRegionExtraSize:
+                case ams::svc::InfoType_AddressSpaceSize:
+                case ams::svc::InfoType_ShadowStackRegionAddress:
+                case ams::svc::InfoType_ShadowStackRegionSize:
                     {
                         /* These info types don't support non-zero subtypes. */
                         R_UNLESS(info_subtype == 0,  svc::ResultInvalidCombination());
@@ -312,6 +324,19 @@ namespace ams::kern::svc {
 
                         /* Get the io region's address hint. */
                         *out = io_region->GetHint();
+                    }
+                    break;
+                case ams::svc::InfoType_TransferMemoryHint:
+                    {
+                        /* Verify the sub-type is valid. */
+                        R_UNLESS(info_subtype == 0, svc::ResultInvalidCombination());
+
+                        /* Get the transfer memory from its handle. */
+                        KScopedAutoObject transfer_memory = GetCurrentProcess().GetHandleTable().GetObject<KTransferMemory>(handle);
+                        R_UNLESS(transfer_memory.IsNotNull(), svc::ResultInvalidHandle());
+
+                        /* Get the transfer memory's address hint. */
+                        *out = transfer_memory->GetHint();
                     }
                     break;
                 case ams::svc::InfoType_MesosphereMeta:

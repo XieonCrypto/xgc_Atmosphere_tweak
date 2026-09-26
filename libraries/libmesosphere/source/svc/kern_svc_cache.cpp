@@ -83,7 +83,7 @@ namespace ams::kern::svc {
             R_SUCCEED_IF(size == 0);
 
             /* Validate that the region is within range. */
-            R_UNLESS(GetCurrentProcess().GetPageTable().Contains(address, size), svc::ResultInvalidCurrentMemory());
+            R_UNLESS(GetCurrentProcess().GetPageTable().IsSafeUserPointer(address, size), svc::ResultInvalidCurrentMemory()); /* did N intend ResultInvalidPointer like everywhere else? */
 
             /* Flush the cache. */
             R_TRY(cpu::FlushDataCache(reinterpret_cast<void *>(address), size));
@@ -131,7 +131,7 @@ namespace ams::kern::svc {
             } else {
                 class StoreCacheOperation : public CacheOperation {
                     public:
-                        virtual void Operate(void *address, size_t size) const override { cpu::StoreDataCache(address, size); }
+                        virtual void Operate(void *address, size_t size) const override { MESOSPHERE_R_ABORT_UNLESS(cpu::StoreDataCache(address, size)); }
                 } operation;
 
                 R_RETURN(DoProcessCacheOperation(operation, page_table, address, size));
@@ -158,7 +158,7 @@ namespace ams::kern::svc {
             } else {
                 class FlushCacheOperation : public CacheOperation {
                     public:
-                        virtual void Operate(void *address, size_t size) const override { cpu::FlushDataCache(address, size); }
+                        virtual void Operate(void *address, size_t size) const override { MESOSPHERE_R_ABORT_UNLESS(cpu::FlushDataCache(address, size)); }
                 } operation;
 
                 R_RETURN(DoProcessCacheOperation(operation, page_table, address, size));

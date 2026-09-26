@@ -231,7 +231,7 @@
                     R_RETURN(::svcGetThreadContext3(reinterpret_cast<::ThreadContext *>(out_context.GetPointerUnsafe()), thread_handle));
                 }
 
-                ALWAYS_INLINE Result WaitForAddress(::ams::svc::Address address, ::ams::svc::ArbitrationType arb_type, int32_t value, int64_t timeout_ns) {
+                ALWAYS_INLINE Result WaitForAddress(::ams::svc::Address address, ::ams::svc::ArbitrationType arb_type, int64_t value, int64_t timeout_ns) {
                     R_RETURN(::svcWaitForAddress(reinterpret_cast<void *>(static_cast<uintptr_t>(address)), arb_type, value, timeout_ns));
                 }
 
@@ -388,7 +388,7 @@
                 }
 
                 ALWAYS_INLINE Result GetDebugEvent(::ams::svc::UserPointer< ::ams::svc::lp64::DebugEventInfo *> out_info, ::ams::svc::Handle debug_handle) {
-                    R_RETURN(::svcGetDebugEvent(out_info.GetPointerUnsafe(), debug_handle));
+                    R_RETURN(::svcGetDebugEvent(reinterpret_cast<::DebugEventInfo *>(out_info.GetPointerUnsafe()), debug_handle));
                 }
 
                 ALWAYS_INLINE Result ContinueDebugEvent(::ams::svc::Handle debug_handle, uint32_t flags, ::ams::svc::UserPointer<const uint64_t *> thread_ids, int32_t num_thread_ids) {

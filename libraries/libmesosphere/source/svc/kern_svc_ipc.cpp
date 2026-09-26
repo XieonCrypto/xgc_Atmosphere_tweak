@@ -110,7 +110,7 @@ namespace ams::kern::svc {
             /* Copy user handles. */
             if (num_handles > 0) {
                 /* Ensure that we can try to get the handles. */
-                R_UNLESS(GetCurrentProcess().GetPageTable().Contains(KProcessAddress(user_handles.GetUnsafePointer()), num_handles * sizeof(ams::svc::Handle)), svc::ResultInvalidPointer());
+                R_UNLESS(GetCurrentProcess().GetPageTable().IsSafeUserPointer(KProcessAddress(user_handles.GetUnsafePointer()), num_handles * sizeof(ams::svc::Handle)), svc::ResultInvalidPointer());
 
                 /* Get the handles. */
                 R_TRY(user_handles.CopyArrayTo(handles, num_handles));
@@ -148,7 +148,7 @@ namespace ams::kern::svc {
 
             {
                 /* If we fail to send the message, unlock the message buffer. */
-                ON_RESULT_FAILURE { page_table.UnlockForIpcUserBuffer(message, buffer_size); };
+                ON_RESULT_FAILURE { static_cast<void>(page_table.UnlockForIpcUserBuffer(message, buffer_size)); };
 
                 /* Send the request. */
                 MESOSPHERE_ASSERT(message != 0);
@@ -220,7 +220,7 @@ namespace ams::kern::svc {
 
             /* Ensure that if we fail and aren't terminating that we unlock the user buffer. */
             ON_RESULT_FAILURE_BESIDES(svc::ResultTerminationRequested) {
-                page_table.UnlockForIpcUserBuffer(message, buffer_size);
+                static_cast<void>(page_table.UnlockForIpcUserBuffer(message, buffer_size));
             };
 
             /* Send the request. */
@@ -248,7 +248,7 @@ namespace ams::kern::svc {
 
             {
                 /* If we fail to send the message, unlock the message buffer. */
-                ON_RESULT_FAILURE { page_table.UnlockForIpcUserBuffer(message, buffer_size); };
+                ON_RESULT_FAILURE { static_cast<void>(page_table.UnlockForIpcUserBuffer(message, buffer_size)); };
 
                 /* Reply/Receive the request. */
                 MESOSPHERE_ASSERT(message != 0);

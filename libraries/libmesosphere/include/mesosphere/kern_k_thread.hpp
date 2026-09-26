@@ -29,6 +29,7 @@ namespace ams::kern {
     class KProcess;
     class KConditionVariable;
     class KAddressArbiter;
+    class KPageBuffer;
 
     using KThreadFunction = void (*)(uintptr_t);
 
@@ -105,7 +106,7 @@ namespace ams::kern {
                 util::Atomic<u8> dpc_flags;
                 u8 current_svc_id;
                 u8 reserved_2c;
-                u8 exception_flags;
+                util::Atomic<u8> exception_flags;
                 bool is_pinned;
                 u8 reserved_2f;
                 u8 reserved_30[0x10];
@@ -305,6 +306,8 @@ namespace ams::kern {
             u32                                                *m_light_ipc_data;
             KProcessAddress                                     m_tls_address;
             void                                               *m_tls_heap_address;
+            KProcessAddress                                     m_shadow_stack_address;
+            KPageBuffer                                        *m_shadow_stack_page;
             KLightLock                                          m_activity_pause_lock;
             SyncObjectBuffer                                    m_sync_object_buffer;
             s64                                                 m_schedule_count;
@@ -341,18 +344,19 @@ namespace ams::kern {
             bool                                                m_debug_attached;
             s8                                                  m_priority_inheritance_count;
             bool                                                m_resource_limit_release_hint;
+            bool                                                m_debug_unknown5;
         public:
             constexpr explicit KThread(util::ConstantInitializeTag)
                 : KAutoObjectWithSlabHeapAndContainer<KThread, KWorkerTask>(util::ConstantInitialize), KTimerTask(util::ConstantInitialize),
                   m_process_list_node{}, m_condvar_arbiter_tree_node{util::ConstantInitialize}, m_priority{-1}, m_condvar_tree{}, m_condvar_key{},
                   m_caller_save_fpu_registers{}, m_virtual_affinity_mask{}, m_physical_affinity_mask{}, m_thread_id{}, m_cpu_time{0}, m_address_key{Null<KProcessAddress>}, m_parent{},
-                  m_kernel_stack_top{}, m_light_ipc_data{}, m_tls_address{Null<KProcessAddress>}, m_tls_heap_address{}, m_activity_pause_lock{}, m_sync_object_buffer{util::ConstantInitialize},
+                  m_kernel_stack_top{}, m_light_ipc_data{}, m_tls_address{Null<KProcessAddress>}, m_tls_heap_address{}, m_shadow_stack_address{Null<KProcessAddress>}, m_shadow_stack_page{}, m_activity_pause_lock{}, m_sync_object_buffer{util::ConstantInitialize},
                   m_schedule_count{}, m_last_scheduled_tick{}, m_per_core_priority_queue_entry{}, m_wait_queue{}, m_held_lock_info_list{}, m_waiting_lock_info{},
                   m_pinned_waiter_list{}, m_debug_params{}, m_closed_object{}, m_address_key_value{}, m_suspend_request_flags{}, m_suspend_allowed_flags{}, m_synced_index{},
                   m_wait_result{svc::ResultNoSynchronizationObject()}, m_debug_exception_result{ResultSuccess()}, m_base_priority{}, m_base_priority_on_unpin{},
                   m_physical_ideal_core_id{}, m_virtual_ideal_core_id{}, m_num_kernel_waiters{}, m_current_core_id{}, m_core_id{}, m_original_physical_affinity_mask{},
                   m_original_physical_ideal_core_id{}, m_num_core_migration_disables{}, m_thread_state{}, m_termination_requested{false}, m_wait_cancelled{},
-                  m_cancellable{}, m_signaled{}, m_initialized{}, m_debug_attached{}, m_priority_inheritance_count{}, m_resource_limit_release_hint{}
+                  m_cancellable{}, m_signaled{}, m_initialized{}, m_debug_attached{}, m_priority_inheritance_count{}, m_resource_limit_release_hint{}, m_debug_unknown5{}
             {
                 /* ... */
             }
@@ -417,17 +421,17 @@ namespace ams::kern {
         private:
             ALWAYS_INLINE void SetExceptionFlag(ExceptionFlag flag) {
                 MESOSPHERE_ASSERT_THIS();
-                this->GetStackParameters().exception_flags |= flag;
+                this->GetStackParameters().exception_flags.FetchOr<std::memory_order_relaxed>(flag);
             }
 
             ALWAYS_INLINE void ClearExceptionFlag(ExceptionFlag flag) {
                 MESOSPHERE_ASSERT_THIS();
-                this->GetStackParameters().exception_flags &= ~flag;
+                this->GetStackParameters().exception_flags.FetchAnd<std::memory_order_relaxed>(~flag);
             }
 
             ALWAYS_INLINE bool IsExceptionFlagSet(ExceptionFlag flag) const {
                 MESOSPHERE_ASSERT_THIS();
-                return this->GetStackParameters().exception_flags & flag;
+                return this->GetStackParameters().exception_flags.Load<std::memory_order_relaxed>() & flag;
             }
         public:
             /* ALWAYS_INLINE void SetCallingSvc()      { return this->SetExceptionFlag(ExceptionFlag_IsCallingSvc); }    */
@@ -523,7 +527,7 @@ namespace ams::kern {
             Result GetCoreMask(int32_t *out_ideal_core, u64 *out_affinity_mask);
             Result SetCoreMask(int32_t ideal_core, u64 affinity_mask);
 
-            Result GetPhysicalCoreMask(int32_t *out_ideal_core, u64 *out_affinity_mask);
+            void GetPhysicalCoreMask(int32_t *out_ideal_core, u64 *out_affinity_mask);
 
             constexpr ThreadState GetState() const { return static_cast<ThreadState>(m_thread_state & ThreadState_Mask); }
             constexpr ThreadState GetRawState() const { return m_thread_state; }
@@ -683,6 +687,9 @@ namespace ams::kern {
             constexpr void SetDebugAttached() { m_debug_attached = true; }
             constexpr bool IsAttachedToDebugger() const { return m_debug_attached; }
 
+            constexpr void SetDebugUnknown5(bool value) { m_debug_unknown5 = value; }
+            constexpr bool IsDebugUnknown5() const { return m_debug_unknown5; }
+
             void AddCpuTime(s32 core_id, s64 amount) {
                 m_cpu_time += amount;
                 /* TODO: Debug kernels track per-core tick counts. Should we? */
@@ -717,7 +724,7 @@ namespace ams::kern {
             }
 
             void SetBasePriority(s32 priority);
-            Result SetPriorityToIdle();
+            void SetPriorityToIdle();
 
             Result Run();
             void Exit();
@@ -725,7 +732,7 @@ namespace ams::kern {
             Result Terminate();
             ThreadState RequestTerminate();
 
-            Result Sleep(s64 timeout);
+            void Sleep(s64 timeout);
 
             ALWAYS_INLINE void *GetStackTop() const { return reinterpret_cast<StackParameters *>(m_kernel_stack_top) - 1; }
             ALWAYS_INLINE void *GetKernelStackTop() const { return m_kernel_stack_top; }

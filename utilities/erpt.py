@@ -223,8 +223,8 @@ CATEGORIES = {
     124 : 'NvHostErrInfo',
     125 : 'RunningUlaInfo',
     126 : 'InternalPanelInfo',
-    127 : 'ResourceLimitLimitInfo',
-    128 : 'ResourceLimitPeakInfo',
+    127 : 'ResourceLimitInfo',
+    128 : 'ResourceLimitPeakInfoDeprecated',
     129 : 'TouchScreenInfo',
     130 : 'AcpUserAccountSettingsInfo',
     131 : 'AudioDeviceInfo',
@@ -238,7 +238,27 @@ CATEGORIES = {
     139 : 'EthernetAdapterOUIInfo',
     140 : 'NANDTypeInfo',
     141 : 'MicroSDTypeInfo',
+    142 : 'AttachmentFileInfo',
+    143 : 'WlanInfo',
+    144 : 'HalfAwakeStateInfo',
+    145 : 'PctlSettingInfo',
+    146 : 'GameCardLogInfo',
+    147 : 'WlanIoctlErrorInfo',
+    148 : 'SdCardActivationInfo',
+    149 : 'GameCardDetailedErrorInfo',
+    150 : 'NetworkInfo2',
+    151 : 'SystemSettingInfo',
+    152 : 'MigrationStateInfo',
+    153 : 'WinVdInfo',
+    154 : 'PscTransitionStateInfo',
+    155 : 'FsProxyErrorInfo3',
+    156 : 'BluetoothErrorInfo',
+    157 : 'SystemConfigInfo',
+    158 : 'ClockContextInfo',
     1000 : 'TestNx',
+    1001 : 'NANDTypeInfo',
+    1002 : 'NANDExtendedCsd',
+    1003 : 'BluetoothAudioInfo',
 }
 
 FIELD_TYPES = {
@@ -326,7 +346,7 @@ def get_full(nxo):
             full = put_qword(full, offset, addend + LOAD_BASE)
         else:
             print('TODO r_type %d' % (r_type,))
-    with open('E:\\full.bin', 'wb') as f:
+    with open('full.bin', 'wb') as f:
         f.write(full)
     return full
 
@@ -397,10 +417,14 @@ def find_types(full, num_fields):
     KNOWN     = range(10) + [4, 4, 2, 4]
     KNOWN_OLD = range(10) + [4, 4, 0, 4]
     try:
-        ind = full.index(''.join(pk('<I', i) for i in KNOWN))
+        ind = full.index(''.join(pk('<B', i) for i in KNOWN))
+        return list(up('<'+'B'*num_fields, full[ind:ind+num_fields]))
     except ValueError:
-        ind = full.index(''.join(pk('<I', i) for i in KNOWN_OLD))
-    return list(up('<'+'I'*num_fields, full[ind:ind+4*num_fields]))
+        try:
+            ind = full.index(''.join(pk('<I', i) for i in KNOWN))
+        except ValueError:
+            ind = full.index(''.join(pk('<I', i) for i in KNOWN_OLD))
+        return list(up('<'+'I'*num_fields, full[ind:ind+4*num_fields]))
 
 def find_flags(full, num_fields, magic_idx):
     KNOWN = '\x00' + ('\x01'*6) + '\x00\x01\x01\x00'

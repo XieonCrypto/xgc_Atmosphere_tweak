@@ -76,7 +76,7 @@ namespace ams::pm::impl {
 
     }
 
-    ProcessInfo::ProcessInfo(os::NativeHandle h, os::ProcessId pid, ldr::PinId pin, const ncm::ProgramLocation &l, const cfg::OverrideStatus &s) : m_process_id(pid), m_pin_id(pin), m_loc(l), m_status(s), m_handle(h), m_state(svc::ProcessState_Created), m_flags(0) {
+    ProcessInfo::ProcessInfo(os::NativeHandle h, os::ProcessId pid, ldr::PinId pin, const ncm::ProgramLocation &l, const cfg::OverrideStatus &s, const ProcessAttributes &attrs) : m_process_id(pid), m_pin_id(pin), m_loc(l), m_status(s), m_handle(h), m_state(svc::ProcessState_Created), m_flags(0), m_attrs(attrs) {
         os::InitializeMultiWaitHolder(std::addressof(m_multi_wait_holder), m_handle);
         os::SetMultiWaitHolderUserData(std::addressof(m_multi_wait_holder), reinterpret_cast<uintptr_t>(this));
     }
@@ -89,8 +89,8 @@ namespace ams::pm::impl {
         if (m_handle != os::InvalidNativeHandle) {
             /* Unregister the process. */
             fsprUnregisterProgram(m_process_id.value);
-            sm::manager::UnregisterProcess(m_process_id);
-            ldr::pm::UnpinProgram(m_pin_id);
+            R_DISCARD(sm::manager::UnregisterProcess(m_process_id));
+            R_DISCARD(ldr::pm::UnpinProgram(m_pin_id));
 
             /* Close the process's handle. */
             os::CloseNativeHandle(m_handle);
@@ -106,8 +106,8 @@ namespace ams::pm::impl {
         return ProcessListAccessor(g_exit_list);
     }
 
-    ProcessInfo *AllocateProcessInfo(svc::Handle process_handle, os::ProcessId process_id, ldr::PinId pin_id, const ncm::ProgramLocation &location, const cfg::OverrideStatus &override_status) {
-        return g_process_info_allocator.AllocateProcessInfo(process_handle, process_id, pin_id, location, override_status);
+    ProcessInfo *AllocateProcessInfo(svc::Handle process_handle, os::ProcessId process_id, ldr::PinId pin_id, const ncm::ProgramLocation &location, const cfg::OverrideStatus &override_status, const ProcessAttributes &attrs) {
+        return g_process_info_allocator.AllocateProcessInfo(process_handle, process_id, pin_id, location, override_status, attrs);
     }
 
     void CleanupProcessInfo(ProcessListAccessor &list, ProcessInfo *process_info) {

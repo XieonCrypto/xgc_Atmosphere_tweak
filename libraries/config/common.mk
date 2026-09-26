@@ -44,7 +44,7 @@ else ifeq ($(strip $(ATMOSPHERE_COMPILER_NAME)),clang)
 export ATMOSPHERE_CFLAGS += -Wno-c99-designator -Wno-gnu-alignof-expression -Wno-unused-private-field
 endif
 
-export ATMOSPHERE_CXXFLAGS := -fno-rtti -fno-exceptions -std=gnu++20 -Wno-invalid-offsetof
+export ATMOSPHERE_CXXFLAGS := -fno-rtti -fno-exceptions -std=gnu++23 -Wno-invalid-offsetof
 export ATMOSPHERE_ASFLAGS  :=
 
 
@@ -296,6 +296,23 @@ FIND_SOURCE_FILES=$(foreach dir,$1,$(filter-out $(notdir $(wildcard $(dir)/*.arc
                   $(foreach dir,$1,$(call FIND_SPECIFIC_SOURCE_FILES_EX,$(dir),cpu,$(ATMOSPHERE_CPU_NAME) $(ATMOSPHERE_CPU_EXTENSIONS),$2))
 
 ATMOSPHERE_GCH_IDENTIFIER := $(ATMOSPHERE_FULL_NAME)
+
+#---------------------------------------------------------------------------------
+# Python.  The scripts should work with Python 2 or 3, but 2 is preferred.
+#---------------------------------------------------------------------------------
+PYTHON = $(shell command -v python >/dev/null && echo python || echo python3)
+
+#---------------------------------------------------------------------------------
+# Export MAKE:
+# GCC's LTO driver invokes Make internally.  This invocation respects both $(MAKE)
+# and $(MAKEFLAGS), but only if they're in the environment.  By default, MAKEFLAGS
+# is in the environment while MAKE isn't, so GCC will always use the default
+# `make` command, yet it inherits MAKEFLAGS from the copy of Make the user
+# invoked, which might have incompatible flags.  In practice this is an issue on
+# macOS when running e.g. `gmake -j32 -Otarget`.  This behavior is arguably a bug
+# in GCC and/or Make, but we can work around it by exporting MAKE.
+#---------------------------------------------------------------------------------
+export MAKE
 
 #---------------------------------------------------------------------------------
 # Rules for compiling pre-compiled headers

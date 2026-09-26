@@ -20,7 +20,7 @@ endif
 DEFINES	    := $(ATMOSPHERE_DEFINES) -DATMOSPHERE_IS_MESOSPHERE
 SETTINGS    := $(ATMOSPHERE_SETTINGS) $(ATMOSPHERE_OPTIMIZATION_FLAG) -mgeneral-regs-only -ffixed-x18 -Wextra -Werror -fno-non-call-exceptions
 CFLAGS      := $(ATMOSPHERE_CFLAGS) $(SETTINGS) $(DEFINES) $(INCLUDE)
-CXXFLAGS    := $(CFLAGS) $(ATMOSPHERE_CXXFLAGS) -fno-use-cxa-atexit -flto
+CXXFLAGS    := $(CFLAGS) $(ATMOSPHERE_CXXFLAGS) -fno-use-cxa-atexit
 ASFLAGS     := $(ATMOSPHERE_ASFLAGS) $(SETTINGS) $(DEFINES) $(INCLUDE)
 
 SOURCES     += $(foreach v,$(call ALL_SOURCE_DIRS,../libvapours/source),$(if $(findstring ../libvapours/source/sdmmc,$v),,$v))
@@ -86,7 +86,7 @@ clean:
 	@echo clean $(ATMOSPHERE_BUILD_NAME) ...
 	@rm -fr $(ATMOSPHERE_BUILD_DIR) $(ATMOSPHERE_OUT_DIR)
 	@rm -fr $(foreach hdr,$(GCH_DIRS),$(hdr)/$(ATMOSPHERE_GCH_IDENTIFIER))
-	@for i in $(GCH_DIRS); do [ -d $$i ] && rmdir --ignore-fail-on-non-empty $$i || true; done
+	@for i in $(GCH_DIRS); do [ -d $$i ] && rmdir $$i 2>/dev/null || true; done
 
 $(ATMOSPHERE_LIBRARY_DIR) $(ATMOSPHERE_BUILD_DIR) $(GCH_DIRS):
 	@[ -d $@ ] || mkdir -p $@
@@ -107,6 +107,8 @@ $(filter-out kern_svc_tables.o, $(OFILES))	:	$(GCH_FILES)
 $(OFILES_SRC)	: $(HFILES_BIN)
 
 kern_libc_generic.o: CFLAGS += -fno-builtin
+
+crypto_aes_impl.arch.arm64.o: CXXFLAGS := $(filter-out -mgeneral-regs-only,$(CXXFLAGS))
 
 #---------------------------------------------------------------------------------
 %_bin.h %.bin.o	:	%.bin

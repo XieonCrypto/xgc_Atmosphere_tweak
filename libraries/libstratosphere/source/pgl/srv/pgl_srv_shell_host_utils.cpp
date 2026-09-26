@@ -75,15 +75,15 @@ namespace ams::pgl::srv {
             NON_COPYABLE(HostPackageReader);
             NON_MOVEABLE(HostPackageReader);
             private:
-                char m_content_path[fs::EntryNameLengthMax] = {};
-                ExtensionType m_extension_type              = ExtensionType::None;
-                char m_mount_name[fs::MountNameLengthMax]   = {};
-                bool m_is_mounted                           = false;
+                char m_content_path[fs::EntryNameLengthMax]   = {};
+                ExtensionType m_extension_type                = ExtensionType::None;
+                char m_mount_name[fs::MountNameLengthMax + 1] = {};
+                bool m_is_mounted                             = false;
                 ncm::AutoBuffer m_content_meta_buffer;
-                ncm::ProgramId m_program_id                 = ncm::InvalidProgramId;
-                u32 m_program_version                       = 0;
-                ncm::ContentMetaType m_content_meta_type    = static_cast<ncm::ContentMetaType>(0);
-                u8 m_program_index                          = 0;
+                ncm::ProgramId m_program_id                   = ncm::InvalidProgramId;
+                u32 m_program_version                         = 0;
+                ncm::ContentMetaType m_content_meta_type      = static_cast<ncm::ContentMetaType>(0);
+                u8 m_program_index                            = 0;
             public:
                 HostPackageReader() : m_content_meta_buffer() { /* ... */ }
                 ~HostPackageReader() {
@@ -335,7 +335,7 @@ namespace ams::pgl::srv {
         R_RETURN(pgl::srv::LaunchProgram(out, ncm::ProgramLocation::Make(reader.GetProgramId(), ncm::StorageId::Host), pm_flags, pgl::LaunchFlags_None));
     }
 
-    Result GetHostContentMetaInfo(pgl::ContentMetaInfo *out, const char *package_path) {
+    Result GetProgramLaunchPropertyFromHost(pgl::ProgramLaunchProperty *out, const char *package_path) {
         /* Read the package. */
         HostPackageReader reader;
         R_TRY(reader.Initialize(package_path, HostPackageMountName));
@@ -343,12 +343,13 @@ namespace ams::pgl::srv {
         /* Read the program info. */
         R_TRY(reader.ReadProgramInfo());
 
-        /* Get the content meta info. */
+        /* Get the program launch property. */
         *out = {
-            .id           = reader.GetProgramId().value,
-            .version      = reader.GetProgramVersion(),
-            .content_type = ncm::ContentType::Program,
-            .id_offset    = reader.GetProgramIndex(),
+            .id                = reader.GetProgramId().value,
+            .version           = reader.GetProgramVersion(),
+            .content_type      = ncm::ContentType::Program,
+            .id_offset         = reader.GetProgramIndex(),
+            .content_meta_type = reader.GetContentMetaType(),
         };
 
         R_SUCCEED();

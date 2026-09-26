@@ -23,8 +23,8 @@ namespace ams::fs {
     #if defined(ATMOSPHERE_OS_HORIZON)
     namespace {
 
-        constinit std::aligned_storage_t<0x80> g_fsp_service_object_buffer;
-        constinit std::aligned_storage_t<0x80> g_fsp_ldr_service_object_buffer;
+        alignas(0x10) constinit std::byte g_fsp_service_object_buffer[0x80] = {};
+        alignas(0x10) constinit std::byte g_fsp_ldr_service_object_buffer[0x80] = {};
         constinit bool g_use_static_fsp_service_object_buffer = false;
         constinit bool g_use_static_fsp_ldr_service_object_buffer = false;
 
@@ -105,7 +105,9 @@ namespace ams::fs {
                 AMS_ABORT_UNLESS(fsp_object != nullptr);
 
                 /* Set the current process. */
-                fsp_object->SetCurrentProcess({});
+                const auto scp_res = fsp_object->SetCurrentProcess({});
+                R_ASSERT(scp_res);
+                AMS_UNUSED(scp_res);
             }
             #else
             /* On non-horizon, use the system object. */

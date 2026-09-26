@@ -214,6 +214,10 @@ namespace ams::kern {
         m_tls_address                   = 0;
         m_tls_heap_address              = 0;
 
+        /* Set shadow stack address and page. */
+        m_shadow_stack_address          = Null<KProcessAddress>;
+        m_shadow_stack_page             = nullptr;
+
         /* Set parent and condvar tree. */
         m_parent                        = nullptr;
         m_condvar_tree                  = nullptr;
@@ -281,6 +285,29 @@ namespace ams::kern {
             R_TRY(owner->CreateThreadLocalRegion(std::addressof(m_tls_address)));
             m_tls_heap_address = owner->GetThreadLocalRegionPointer(m_tls_address);
             std::memset(m_tls_heap_address, 0, ams::svc::ThreadLocalRegionSize);
+
+            /* If the owning process has a shadow stack, allocate and map a page for this thread. */
+            if (owner->GetCreateProcessParameterFlags() & ams::svc::CreateProcessParameterFlag_EnableShadowStack) {
+                /* Allocate the backing page. */
+                KPageBuffer *page = KPageBuffer::AllocateChecked<PageSize>();
+                if (page == nullptr) {
+                    owner->DeleteThreadLocalRegion(m_tls_address);
+                    m_tls_address = Null<KProcessAddress>;
+                    R_THROW(svc::ResultOutOfMemory());
+                }
+
+                /* If we fail to map the page, free it and undo the TLS region we just created. */
+                ON_RESULT_FAILURE {
+                    KPageBuffer::Free(page);
+                    owner->DeleteThreadLocalRegion(m_tls_address);
+                    m_tls_address = Null<KProcessAddress>;
+                };
+
+                /* Map the page into the process's shadow stack region. */
+                R_TRY(owner->GetPageTable().MapPages(std::addressof(m_shadow_stack_address), 1, PageSize, page->GetPhysicalAddress(), KMemoryState_ShadowStack, KMemoryPermission_UserReadWrite));
+
+                m_shadow_stack_page = page;
+            }
         }
 
         /* Set parent, if relevant. */
@@ -390,9 +417,15 @@ namespace ams::kern {
             m_parent->UnregisterThread(this);
         }
 
+        /* If the thread has a shadow stack, unmap and free its page. */
+        if (m_shadow_stack_address != Null<KProcessAddress>) {
+            MESOSPHERE_R_ABORT_UNLESS(m_parent->GetPageTable().UnmapPages(m_shadow_stack_address, 1, KMemoryState_ShadowStack));
+            KPageBuffer::Free(m_shadow_stack_page);
+        }
+
         /* If the thread has a local region, delete it. */
         if (m_tls_address != Null<KProcessAddress>) {
-            MESOSPHERE_R_ABORT_UNLESS(m_parent->DeleteThreadLocalRegion(m_tls_address));
+            m_parent->DeleteThreadLocalRegion(m_tls_address);
         }
 
         /* Release any waiters. */
@@ -697,7 +730,7 @@ namespace ams::kern {
         R_SUCCEED();
     }
 
-    Result KThread::GetPhysicalCoreMask(int32_t *out_ideal_core, u64 *out_affinity_mask) {
+    void KThread::GetPhysicalCoreMask(int32_t *out_ideal_core, u64 *out_affinity_mask) {
         MESOSPHERE_ASSERT_THIS();
         {
             KScopedSchedulerLock sl;
@@ -712,8 +745,6 @@ namespace ams::kern {
                 *out_affinity_mask = m_original_physical_affinity_mask.GetAffinityMask();
             }
         }
-
-        R_SUCCEED();
     }
 
     Result KThread::SetCoreMask(int32_t core_id, u64 v_affinity_mask) {
@@ -852,7 +883,7 @@ namespace ams::kern {
         }
     }
 
-    Result KThread::SetPriorityToIdle() {
+    void KThread::SetPriorityToIdle() {
         MESOSPHERE_ASSERT_THIS();
 
         KScopedSchedulerLock sl;
@@ -862,8 +893,6 @@ namespace ams::kern {
         m_priority      = IdleThreadPriority;
         m_base_priority = IdleThreadPriority;
         KScheduler::OnThreadPriorityChanged(this, old_priority);
-
-        R_SUCCEED();
     }
 
     void KThread::RequestSuspend(SuspendType type) {
@@ -1407,7 +1436,7 @@ namespace ams::kern {
         return this->GetState();
     }
 
-    Result KThread::Sleep(s64 timeout) {
+    void KThread::Sleep(s64 timeout) {
         MESOSPHERE_ASSERT_THIS();
         MESOSPHERE_ASSERT(!KScheduler::IsSchedulerLockedByCurrentThread());
         MESOSPHERE_ASSERT(this == GetCurrentThreadPointer());
@@ -1422,15 +1451,13 @@ namespace ams::kern {
             /* Check if the thread should terminate. */
             if (this->IsTerminationRequested()) {
                 slp.CancelSleep();
-                R_THROW(svc::ResultTerminationRequested());
+                return;
             }
 
             /* Wait for the sleep to end. */
             wait_queue.SetHardwareTimer(timer);
             this->BeginWait(std::addressof(wait_queue));
         }
-
-        R_SUCCEED();
     }
 
     void KThread::BeginWait(KThreadQueue *queue) {
@@ -1438,7 +1465,10 @@ namespace ams::kern {
         this->SetState(ThreadState_Waiting);
 
         /* Set our wait queue. */
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wdangling-pointer"
         m_wait_queue = queue;
+        #pragma GCC diagnostic pop
     }
 
     void KThread::NotifyAvailable(KSynchronizationObject *signaled_object, Result wait_result) {

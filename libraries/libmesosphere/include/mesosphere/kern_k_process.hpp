@@ -102,8 +102,8 @@ namespace ams::kern {
             IoRegionList                m_io_region_list;
             bool                        m_is_suspended;
             bool                        m_is_immortal;
-            bool                        m_is_jit_debug;
             bool                        m_is_handle_table_initialized;
+            bool                        m_is_jit_debug;
             ams::svc::DebugEvent        m_jit_debug_event_type;
             ams::svc::DebugException    m_jit_debug_exception_type;
             uintptr_t                   m_jit_debug_params[4];
@@ -113,6 +113,7 @@ namespace ams::kern {
             u64                         m_running_thread_idle_counts[cpu::NumCores];
             u64                         m_running_thread_switch_counts[cpu::NumCores];
             KThread                    *m_pinned_threads[cpu::NumCores];
+            s64                         m_exit_tag;
             util::Atomic<s64>           m_cpu_time;
             util::Atomic<s64>           m_num_process_switches;
             util::Atomic<s64>           m_num_thread_switches;
@@ -142,11 +143,11 @@ namespace ams::kern {
                 m_pinned_threads[core_id] = nullptr;
             }
         public:
-            explicit KProcess() : m_is_initialized(false) { /* ... */ }
+            explicit KProcess() : m_is_initialized(false), m_exit_tag(-1ll) { /* ... */ }
 
             Result Initialize(const ams::svc::CreateProcessParameter &params, const KPageGroup &pg, const u32 *caps, s32 num_caps, KResourceLimit *res_limit, KMemoryManager::Pool pool, bool immortal);
             Result Initialize(const ams::svc::CreateProcessParameter &params, svc::KUserPointer<const u32 *> caps, s32 num_caps, KResourceLimit *res_limit, KMemoryManager::Pool pool);
-            void Exit();
+            void Exit(s64 exit_tag);
 
             constexpr const char *GetName() const { return m_name; }
 
@@ -155,19 +156,22 @@ namespace ams::kern {
             constexpr u64 GetProcessId() const { return m_process_id; }
 
             constexpr State GetState() const { return m_state; }
+            
+            constexpr s64 GetExitTag() const { return m_exit_tag; }
 
             constexpr u64 GetCoreMask() const { return m_capabilities.GetCoreMask(); }
             constexpr u64 GetPhysicalCoreMask() const { return m_capabilities.GetPhysicalCoreMask(); }
             constexpr u64 GetPriorityMask() const { return m_capabilities.GetPriorityMask(); }
+            constexpr u32 GetIntendedKernelMajorVersion() const { return m_capabilities.GetIntendedKernelMajorVersion(); }
 
             constexpr s32 GetIdealCoreId() const { return m_ideal_core_id; }
             constexpr void SetIdealCoreId(s32 core_id) { m_ideal_core_id = core_id; }
 
             constexpr bool CheckThreadPriority(s32 prio) const { return ((1ul << prio) & this->GetPriorityMask()) != 0; }
 
-            constexpr u32 GetCreateProcessFlags() const { return m_flags; }
+            constexpr u32 GetCreateProcessParameterFlags() const { return m_flags; }
 
-            constexpr bool Is64Bit() const { return m_flags & ams::svc::CreateProcessFlag_Is64Bit; }
+            constexpr bool Is64Bit() const { return m_flags & ams::svc::CreateProcessParameterFlag_64Bit; }
 
             constexpr KProcessAddress GetEntryPoint() const { return m_code_address; }
 
@@ -184,7 +188,7 @@ namespace ams::kern {
             constexpr bool IsSuspended() const { return m_is_suspended; }
             constexpr void SetSuspended(bool suspended) { m_is_suspended = suspended; }
 
-            Result Terminate();
+            Result Terminate(s64 exit_tag);
 
             constexpr bool IsTerminated() const {
                 return m_state == State_Terminated;
@@ -206,11 +210,16 @@ namespace ams::kern {
                 return m_capabilities.IsPermittedDebug();
             }
 
+            constexpr bool CanForceDebugProd() const {
+                return m_capabilities.CanForceDebugProd();
+            }
+
             constexpr bool CanForceDebug() const {
                 return m_capabilities.CanForceDebug();
             }
 
             u32 GetAllocateOption() const { return m_page_table.GetAllocateOption(); }
+            size_t GetAddressSpaceSize() const { return m_page_table.GetAddressSpaceSize(); }
 
             ThreadList &GetThreadList() { return m_thread_list; }
             const ThreadList &GetThreadList() const { return m_thread_list; }
@@ -265,7 +274,7 @@ namespace ams::kern {
             void RemoveIoRegion(KIoRegion *io_region);
 
             Result CreateThreadLocalRegion(KProcessAddress *out);
-            Result DeleteThreadLocalRegion(KProcessAddress addr);
+            void DeleteThreadLocalRegion(KProcessAddress addr);
             void *GetThreadLocalRegionPointer(KProcessAddress addr);
 
             constexpr KProcessAddress GetProcessLocalRegionAddress() const { return m_plr_address; }
@@ -360,7 +369,7 @@ namespace ams::kern {
                 R_RETURN(m_address_arbiter.SignalToAddress(address, signal_type, value, count));
             }
 
-            Result WaitAddressArbiter(uintptr_t address, ams::svc::ArbitrationType arb_type, s32 value, s64 timeout) {
+            Result WaitAddressArbiter(uintptr_t address, ams::svc::ArbitrationType arb_type, s64 value, s64 timeout) {
                 R_RETURN(m_address_arbiter.WaitForAddress(address, arb_type, value, timeout));
             }
 
@@ -374,7 +383,7 @@ namespace ams::kern {
 
                 /* Update the current page table. */
                 if (next_process) {
-                    next_process->GetPageTable().Activate(next_process->GetProcessId());
+                    next_process->GetPageTable().Activate(next_process->GetSlabIndex(), next_process->GetProcessId());
                 } else {
                     Kernel::GetKernelPageTable().Activate();
                 }
@@ -404,6 +413,10 @@ namespace ams::kern {
                     m_is_signaled = true;
                     this->NotifyAvailable();
                 }
+            }
+            
+            void SetExitTag(s64 exit_tag) {
+                m_exit_tag = exit_tag;
             }
 
             ALWAYS_INLINE Result InitializeHandleTable(s32 size) {

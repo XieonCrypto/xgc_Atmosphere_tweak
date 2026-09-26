@@ -27,6 +27,7 @@ namespace ams::kern::svc {
                 case ams::svc::MemoryPermission_Read:
                 case ams::svc::MemoryPermission_ReadWrite:
                 case ams::svc::MemoryPermission_ReadExecute:
+                case ams::svc::MemoryPermission_Execute:
                     return true;
                 default:
                     return false;
@@ -147,7 +148,7 @@ namespace ams::kern::svc {
             /* Validate that the mapping is in range. */
             auto &page_table = process->GetPageTable();
             R_UNLESS(page_table.Contains(src_address, size),                           svc::ResultInvalidCurrentMemory());
-            R_UNLESS(page_table.CanContain(dst_address, size, KMemoryState_AliasCode), svc::ResultInvalidCurrentMemory());
+            R_UNLESS(page_table.CanContain(dst_address, size, KMemoryState_AliasCode), svc::ResultInvalidMemoryRegion());
 
             /* Map the memory. */
             R_TRY(page_table.MapCodeMemory(dst_address, src_address, size));
@@ -174,7 +175,7 @@ namespace ams::kern::svc {
             /* Validate that the mapping is in range. */
             auto &page_table = process->GetPageTable();
             R_UNLESS(page_table.Contains(src_address, size),                           svc::ResultInvalidCurrentMemory());
-            R_UNLESS(page_table.CanContain(dst_address, size, KMemoryState_AliasCode), svc::ResultInvalidCurrentMemory());
+            R_UNLESS(page_table.CanContain(dst_address, size, KMemoryState_AliasCode), svc::ResultInvalidMemoryRegion());
 
             /* Unmap the memory. */
             R_TRY(page_table.UnmapCodeMemory(dst_address, src_address, size));

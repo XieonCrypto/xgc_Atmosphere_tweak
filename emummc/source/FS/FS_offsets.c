@@ -71,6 +71,24 @@
 #include "offsets/1700_exfat.h"
 #include "offsets/1800.h"
 #include "offsets/1800_exfat.h"
+#include "offsets/1810.h"
+#include "offsets/1810_exfat.h"
+#include "offsets/1900.h"
+#include "offsets/1900_exfat.h"
+#include "offsets/2000.h"
+#include "offsets/2000_exfat.h"
+#include "offsets/2010.h"
+#include "offsets/2010_exfat.h"
+#include "offsets/2100.h"
+#include "offsets/2100_exfat.h"
+#include "offsets/2120.h"
+#include "offsets/2120_exfat.h"
+#include "offsets/2200.h"
+#include "offsets/2200_exfat.h"
+#include "offsets/2250.h"
+#include "offsets/2250_exfat.h"
+#include "offsets/2300.h"
+#include "offsets/2300_exfat.h"
 #include "../utils/fatal.h"
 
 #define GET_OFFSET_STRUCT_NAME(vers) g_offsets##vers
@@ -153,6 +171,24 @@ DEFINE_OFFSET_STRUCT(_1700);
 DEFINE_OFFSET_STRUCT(_1700_EXFAT);
 DEFINE_OFFSET_STRUCT(_1800);
 DEFINE_OFFSET_STRUCT(_1800_EXFAT);
+DEFINE_OFFSET_STRUCT(_1810);
+DEFINE_OFFSET_STRUCT(_1810_EXFAT);
+DEFINE_OFFSET_STRUCT(_1900);
+DEFINE_OFFSET_STRUCT(_1900_EXFAT);
+DEFINE_OFFSET_STRUCT(_2000);
+DEFINE_OFFSET_STRUCT(_2000_EXFAT);
+DEFINE_OFFSET_STRUCT(_2010);
+DEFINE_OFFSET_STRUCT(_2010_EXFAT);
+DEFINE_OFFSET_STRUCT(_2100);
+DEFINE_OFFSET_STRUCT(_2100_EXFAT);
+DEFINE_OFFSET_STRUCT(_2120);
+DEFINE_OFFSET_STRUCT(_2120_EXFAT);
+DEFINE_OFFSET_STRUCT(_2200);
+DEFINE_OFFSET_STRUCT(_2200_EXFAT);
+DEFINE_OFFSET_STRUCT(_2250);
+DEFINE_OFFSET_STRUCT(_2250_EXFAT);
+DEFINE_OFFSET_STRUCT(_2300);
+DEFINE_OFFSET_STRUCT(_2300_EXFAT);
 
 const fs_offsets_t *get_fs_offsets(enum FS_VER version) {
     switch (version) {
@@ -266,6 +302,42 @@ const fs_offsets_t *get_fs_offsets(enum FS_VER version) {
             return &(GET_OFFSET_STRUCT_NAME(_1800));
         case FS_VER_18_0_0_EXFAT:
             return &(GET_OFFSET_STRUCT_NAME(_1800_EXFAT));
+        case FS_VER_18_1_0:
+            return &(GET_OFFSET_STRUCT_NAME(_1810));
+        case FS_VER_18_1_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_1810_EXFAT));
+        case FS_VER_19_0_0:
+            return &(GET_OFFSET_STRUCT_NAME(_1900));
+        case FS_VER_19_0_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_1900_EXFAT));
+        case FS_VER_20_0_0:
+            return &(GET_OFFSET_STRUCT_NAME(_2000));
+        case FS_VER_20_0_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_2000_EXFAT));
+        case FS_VER_20_1_0:
+            return &(GET_OFFSET_STRUCT_NAME(_2010));
+        case FS_VER_20_1_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_2010_EXFAT));
+        case FS_VER_21_0_0:
+            return &(GET_OFFSET_STRUCT_NAME(_2100));
+        case FS_VER_21_0_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_2100_EXFAT));
+        case FS_VER_21_2_0:
+            return &(GET_OFFSET_STRUCT_NAME(_2120));
+        case FS_VER_21_2_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_2120_EXFAT));
+        case FS_VER_22_0_0:
+            return &(GET_OFFSET_STRUCT_NAME(_2200));
+        case FS_VER_22_0_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_2200_EXFAT));
+        case FS_VER_22_5_0:
+            return &(GET_OFFSET_STRUCT_NAME(_2250));
+        case FS_VER_22_5_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_2250_EXFAT));
+        case FS_VER_23_0_0:
+            return &(GET_OFFSET_STRUCT_NAME(_2300));
+        case FS_VER_23_0_0_EXFAT:
+            return &(GET_OFFSET_STRUCT_NAME(_2300_EXFAT));
         default:
             fatal_abort(Fatal_UnknownVersion);
     }

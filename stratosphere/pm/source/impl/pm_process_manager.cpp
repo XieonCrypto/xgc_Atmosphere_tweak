@@ -86,14 +86,14 @@ namespace ams::pm::impl {
             R_ABORT_UNLESS(os::CreateSystemEvent(std::addressof(g_hook_to_create_application_process_event), os::EventClearMode_AutoClear, true));
         }
 
-        inline u32 GetLoaderCreateProcessFlags(u32 launch_flags) {
+        inline u32 GetLoaderCreateProcessParameterFlags(u32 launch_flags) {
             u32 ldr_flags = 0;
 
             if (ShouldSignalOnException(launch_flags) || (hos::GetVersion() >= hos::Version_2_0_0 && !ShouldStartSuspended(launch_flags))) {
-                ldr_flags |= ldr::CreateProcessFlag_EnableDebug;
+                ldr_flags |= ldr::CreateProcessParameterFlag_EnableJitDebug;
             }
             if (ShouldDisableAslr(launch_flags)) {
-                ldr_flags |= ldr::CreateProcessFlag_DisableAslr;
+                ldr_flags |= ldr::CreateProcessParameterFlag_DisableAslr;
             }
 
             return ldr_flags;
@@ -117,14 +117,14 @@ namespace ams::pm::impl {
             R_SUCCEED();
         }
 
-        Result LaunchProgramImpl(ProcessInfo **out_process_info, os::ProcessId *out_process_id, const ncm::ProgramLocation &loc, u32 flags) {
+        Result LaunchProgramImpl(ProcessInfo **out_process_info, os::ProcessId *out_process_id, const ncm::ProgramLocation &loc, u32 flags, const ProcessAttributes &attrs) {
             /* Set the output to nullptr, if we fail. */
             *out_process_info = nullptr;
 
             /* Get Program Info. */
             ldr::ProgramInfo program_info;
             cfg::OverrideStatus override_status;
-            R_TRY(ldr::pm::AtmosphereGetProgramInfo(std::addressof(program_info), std::addressof(override_status), loc));
+            R_TRY(ldr::pm::AtmosphereGetProgramInfo(std::addressof(program_info), std::addressof(override_status), loc, attrs.program_attrs));
             const bool is_application = (program_info.flags & ldr::ProgramInfoFlag_ApplicationTypeMask) == ldr::ProgramInfoFlag_Application;
             const bool allow_debug    = (program_info.flags & ldr::ProgramInfoFlag_AllowDebug) || hos::GetVersion() < hos::Version_2_0_0;
 
@@ -142,7 +142,7 @@ namespace ams::pm::impl {
                 R_TRY(ldr::pm::AtmospherePinProgram(std::addressof(pin_id), fixed_location, override_status));
 
                 /* If we fail after now, unpin. */
-                ON_RESULT_FAILURE { ldr::pm::UnpinProgram(pin_id); };
+                ON_RESULT_FAILURE { R_DISCARD(ldr::pm::UnpinProgram(pin_id)); };
 
                 /* Ensure we can talk to mitm services. */
                 {
@@ -166,14 +166,14 @@ namespace ams::pm::impl {
                 WaitResourceAvailable(std::addressof(program_info));
 
                 /* Actually create the process. */
-                R_TRY(ldr::pm::CreateProcess(std::addressof(process_handle), pin_id, GetLoaderCreateProcessFlags(flags), GetResourceLimitHandle(std::addressof(program_info))));
+                R_TRY(ldr::pm::CreateProcess(std::addressof(process_handle), pin_id, GetLoaderCreateProcessParameterFlags(flags), GetResourceLimitHandle(std::addressof(program_info)), attrs.program_attrs));
             }
 
             /* Get the process id. */
             os::ProcessId process_id = os::GetProcessId(process_handle);
 
             /* Make new process info. */
-            ProcessInfo *process_info = AllocateProcessInfo(process_handle, process_id, pin_id, fixed_location, override_status);
+            ProcessInfo *process_info = AllocateProcessInfo(process_handle, process_id, pin_id, fixed_location, override_status, attrs);
             AMS_ABORT_UNLESS(process_info != nullptr);
 
             /* Add the new process info to the process list. */
@@ -195,7 +195,7 @@ namespace ams::pm::impl {
             const u8 *aci_fah  = acid_fac + program_info.acid_fac_size;
 
             /* Register with FS and SM. */
-            R_TRY(fsprRegisterProgram(static_cast<u64>(process_id), static_cast<u64>(fixed_location.program_id), static_cast<NcmStorageId>(fixed_location.storage_id), aci_fah, program_info.aci_fah_size, acid_fac, program_info.acid_fac_size));
+            R_TRY(fsprRegisterProgram(static_cast<u64>(process_id), static_cast<u64>(fixed_location.program_id), static_cast<NcmStorageId>(fixed_location.storage_id), aci_fah, program_info.aci_fah_size, acid_fac, program_info.acid_fac_size, 0));
             R_TRY(sm::manager::RegisterProcess(process_id, fixed_location.program_id, override_status, acid_sac, program_info.acid_sac_size, aci_sac, program_info.aci_sac_size));
 
             /* Set flags. */
@@ -253,7 +253,7 @@ namespace ams::pm::impl {
     Result LaunchProgram(os::ProcessId *out_process_id, const ncm::ProgramLocation &loc, u32 flags) {
         /* Launch the program. */
         ProcessInfo *process_info = nullptr;
-        R_TRY(LaunchProgramImpl(std::addressof(process_info), out_process_id, loc, flags));
+        R_TRY(LaunchProgramImpl(std::addressof(process_info), out_process_id, loc, flags, ProcessAttributes_Nx));
 
         /* Register the process info with the tracker. */
         g_process_tracker.QueueEntry(process_info);
@@ -268,7 +268,7 @@ namespace ams::pm::impl {
         R_UNLESS(!process_info->HasStarted(), pm::ResultAlreadyStarted());
 
         ldr::ProgramInfo program_info;
-        R_TRY(ldr::pm::GetProgramInfo(std::addressof(program_info), process_info->GetProgramLocation()));
+        R_TRY(ldr::pm::GetProgramInfo(std::addressof(program_info), process_info->GetProgramLocation(), process_info->GetProcessAttributes().program_attrs));
         R_RETURN(StartProcess(process_info, std::addressof(program_info)));
     }
 
@@ -480,13 +480,16 @@ namespace ams::pm::impl {
     Result NotifyBootFinished() {
         AMS_FUNCTION_LOCAL_STATIC_CONSTINIT(bool, s_has_boot_finished, false);
         if (!s_has_boot_finished) {
-            /* Set program verification disabled, if we should. */
-            /* NOTE: Nintendo does not check the result of this. */
-            if (spl::IsDisabledProgramVerification()) {
-                if (hos::GetVersion() >= hos::Version_10_0_0) {
-                    ldr::pm::SetEnabledProgramVerification(false);
-                } else {
-                    fsprSetEnabledProgramVerification(false);
+            /* 23.0.0+ removed this and all usage of spl from the pm sysmodule, both in normal and safe mode FIRM. */
+            if (hos::GetVersion() < hos::Version_23_0_0) {
+                /* Set program verification disabled, if we should. */
+                /* NOTE: Nintendo does not check the result of this. */
+                if (spl::IsDisabledProgramVerification()) {
+                    if (hos::GetVersion() >= hos::Version_10_0_0) {
+                        R_DISCARD(ldr::pm::SetEnabledProgramVerification(false));
+                    } else {
+                        fsprSetEnabledProgramVerification(false);
+                    }
                 }
             }
 

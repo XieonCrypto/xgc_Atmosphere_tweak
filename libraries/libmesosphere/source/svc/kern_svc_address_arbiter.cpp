@@ -21,8 +21,10 @@ namespace ams::kern::svc {
 
     namespace {
 
-        constexpr bool IsKernelAddress(uintptr_t address) {
-            return KernelVirtualAddressSpaceBase <= address && address < KernelVirtualAddressSpaceEnd;
+        constexpr bool IsValidAddress(uintptr_t address) {
+            if (KernelVirtualAddressSpaceBase <= address && address < KernelVirtualAddressSpaceEnd) return false;
+            if (GetCurrentProcess().GetPageTable().IsInShadowStackRegion(address))                  return false;
+            return true;
         }
 
         constexpr bool IsValidSignalType(ams::svc::SignalType type) {
@@ -41,17 +43,22 @@ namespace ams::kern::svc {
                 case ams::svc::ArbitrationType_WaitIfLessThan:
                 case ams::svc::ArbitrationType_DecrementAndWaitIfLessThan:
                 case ams::svc::ArbitrationType_WaitIfEqual:
+                case ams::svc::ArbitrationType_WaitIfEqual64:
                     return true;
                 default:
                     return false;
             }
         }
 
-        Result WaitForAddress(uintptr_t address, ams::svc::ArbitrationType arb_type, int32_t value, int64_t timeout_ns) {
+        Result WaitForAddress(uintptr_t address, ams::svc::ArbitrationType arb_type, int64_t value, int64_t timeout_ns) {
             /* Validate input. */
-            R_UNLESS(AMS_LIKELY(!IsKernelAddress(address)),     svc::ResultInvalidCurrentMemory());
-            R_UNLESS(util::IsAligned(address, sizeof(int32_t)), svc::ResultInvalidAddress());
-            R_UNLESS(IsValidArbitrationType(arb_type),          svc::ResultInvalidEnumValue());
+            R_UNLESS(AMS_LIKELY(IsValidAddress(address)),           svc::ResultInvalidCurrentMemory());
+            if (arb_type == ams::svc::ArbitrationType_WaitIfEqual64) {
+                R_UNLESS(util::IsAligned(address, sizeof(int64_t)), svc::ResultInvalidAddress());
+            } else {
+                R_UNLESS(util::IsAligned(address, sizeof(int32_t)), svc::ResultInvalidAddress());
+            }
+            R_UNLESS(IsValidArbitrationType(arb_type),              svc::ResultInvalidEnumValue());
 
             /* Convert timeout from nanoseconds to ticks. */
             s64 timeout;
@@ -74,7 +81,7 @@ namespace ams::kern::svc {
 
         Result SignalToAddress(uintptr_t address, ams::svc::SignalType signal_type, int32_t value, int32_t count) {
             /* Validate input. */
-            R_UNLESS(AMS_LIKELY(!IsKernelAddress(address)),     svc::ResultInvalidCurrentMemory());
+            R_UNLESS(AMS_LIKELY(IsValidAddress(address)),       svc::ResultInvalidCurrentMemory());
             R_UNLESS(util::IsAligned(address, sizeof(int32_t)), svc::ResultInvalidAddress());
             R_UNLESS(IsValidSignalType(signal_type),            svc::ResultInvalidEnumValue());
 
@@ -85,7 +92,7 @@ namespace ams::kern::svc {
 
     /* =============================    64 ABI    ============================= */
 
-    Result WaitForAddress64(ams::svc::Address address, ams::svc::ArbitrationType arb_type, int32_t value, int64_t timeout_ns) {
+    Result WaitForAddress64(ams::svc::Address address, ams::svc::ArbitrationType arb_type, int64_t value, int64_t timeout_ns) {
         R_RETURN(WaitForAddress(address, arb_type, value, timeout_ns));
     }
 
@@ -95,7 +102,7 @@ namespace ams::kern::svc {
 
     /* ============================= 64From32 ABI ============================= */
 
-    Result WaitForAddress64From32(ams::svc::Address address, ams::svc::ArbitrationType arb_type, int32_t value, int64_t timeout_ns) {
+    Result WaitForAddress64From32(ams::svc::Address address, ams::svc::ArbitrationType arb_type, int64_t value, int64_t timeout_ns) {
         R_RETURN(WaitForAddress(address, arb_type, value, timeout_ns));
     }
 

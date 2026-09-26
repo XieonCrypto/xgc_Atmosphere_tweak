@@ -15,8 +15,11 @@
  */
 #include <mesosphere.hpp>
 
-extern "C" void _start();
-extern "C" void __end__();
+extern "C" void __rodata_start();
+extern "C" void __rodata_end();
+
+extern "C" void __bin_start__();
+extern "C" void __bin_end__();
 
 namespace ams::kern {
 
@@ -220,6 +223,42 @@ namespace ams::kern::init {
         };
         static_assert(kern::arch::arm64::init::IsInitialPageAllocator<KInitialPageAllocatorForFinalizeIdentityMapping>);
 
+        void SetupAllTtbr0Entries(KInitialPageTable &init_pt, KInitialPageAllocator &allocator) {
+            /* Validate that the ttbr0/tcr_el1 arrays are in rodata. */
+            const uintptr_t rodata_start = reinterpret_cast<uintptr_t>(__rodata_start);
+            const uintptr_t rodata_end = reinterpret_cast<uintptr_t>(__rodata_end);
+            MESOSPHERE_INIT_ABORT_UNLESS(rodata_start < rodata_end);
+            MESOSPHERE_INIT_ABORT_UNLESS(rodata_start <= reinterpret_cast<uintptr_t>(std::addressof(KPageTable::GetTtbr0Entry(0))));
+            MESOSPHERE_INIT_ABORT_UNLESS(reinterpret_cast<uintptr_t>(std::addressof(KPageTable::GetTtbr0Entry(KPageTable::NumPTEntries))) < rodata_end);
+            MESOSPHERE_INIT_ABORT_UNLESS(rodata_start <= reinterpret_cast<uintptr_t>(std::addressof(KPageTable::GetTcrEL1Entry(0))));
+            MESOSPHERE_INIT_ABORT_UNLESS(reinterpret_cast<uintptr_t>(std::addressof(KPageTable::GetTcrEL1Entry(KPageTable::NumPTEntries))) < rodata_end);
+
+            /* Get the default tcr_el1 value, with T0SZ set for a 39-bit address space. */
+            const u64 tcr_el1 = (cpu::GetTcrEl1() & ~UINT64_C(0x3F)) | (64 - 39);
+
+            /* Allocate pages for all ttbr0 entries. */
+            for (size_t i = 0; i < KPageTable::NumPTEntries; ++i) {
+                /* Allocate a page. */
+                KPhysicalAddress page = allocator.Allocate(PageSize);
+                MESOSPHERE_INIT_ABORT_UNLESS(page != Null<KPhysicalAddress>);
+
+                /* Check that the page is allowed to be a ttbr0 entry. */
+                MESOSPHERE_INIT_ABORT_UNLESS((GetInteger(page) & UINT64_C(0xFFFF000000000001)) == 0);
+
+                /* Get the physical address of the ttbr0 entry. */
+                const auto ttbr0_phys_ptr = init_pt.GetPhysicalAddress(KVirtualAddress(std::addressof(KPageTable::GetTtbr0Entry(i))));
+
+                /* Set the entry to the newly allocated page. */
+                *reinterpret_cast<volatile u64 *>(GetInteger(ttbr0_phys_ptr)) = (static_cast<u64>(i) << 48) | GetInteger(page);
+
+                /* Get the physical address of the tcr_el1 entry. */
+                const auto tcr_el1_phys_ptr = init_pt.GetPhysicalAddress(KVirtualAddress(std::addressof(KPageTable::GetTcrEL1Entry(i))));
+
+                /* Set the entry to the default tcr_el1 value. */
+                *reinterpret_cast<volatile u64 *>(GetInteger(tcr_el1_phys_ptr)) = tcr_el1;
+            }
+        }
+
         void FinalizeIdentityMapping(KInitialPageTable &init_pt, KInitialPageAllocator &allocator, u64 phys_to_virt_offset) {
             /* Create an allocator for identity mapping finalization. */
             KInitialPageAllocatorForFinalizeIdentityMapping finalize_allocator(allocator, phys_to_virt_offset);
@@ -264,8 +303,8 @@ namespace ams::kern::init {
         KMemoryLayout::GetPhysicalMemoryRegionTree().InsertDirectly(KernelPhysicalAddressSpaceBase, KernelPhysicalAddressSpaceBase + KernelPhysicalAddressSpaceSize - 1);
 
         /* Save start and end for ease of use. */
-        const uintptr_t code_start_virt_addr = reinterpret_cast<uintptr_t>(_start);
-        const uintptr_t code_end_virt_addr   = reinterpret_cast<uintptr_t>(__end__);
+        const uintptr_t code_start_virt_addr = reinterpret_cast<uintptr_t>(__bin_start__);
+        const uintptr_t code_end_virt_addr   = reinterpret_cast<uintptr_t>(__bin_end__);
 
         /* Setup the containing kernel region. */
         constexpr size_t KernelRegionSize  = 1_GB;
@@ -590,6 +629,9 @@ namespace ams::kern::init {
     void InitializeCorePhase2() {
         /* Create page table object for use during remaining initialization. */
         KInitialPageTable init_pt;
+
+        /* Setup all ttbr0 pages. */
+        SetupAllTtbr0Entries(init_pt, g_initial_page_allocator);
 
         /* Unmap the identity mapping. */
         FinalizeIdentityMapping(init_pt, g_initial_page_allocator, g_phase2_linear_region_phys_to_virt_diff);

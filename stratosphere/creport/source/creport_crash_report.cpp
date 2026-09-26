@@ -26,6 +26,8 @@ namespace ams::creport {
         static_assert(DyingMessageAddressOffset == AMS_OFFSETOF(ams::svc::aarch64::ProcessLocalRegion, dying_message_region_address));
         static_assert(DyingMessageAddressOffset == AMS_OFFSETOF(ams::svc::aarch32::ProcessLocalRegion, dying_message_region_address));
 
+        constexpr size_t CrashReportDataCacheSize = 256_KB;
+
         /* Helper functions. */
         bool TryGetCurrentTimestamp(u64 *out) {
             /* Clear output. */
@@ -51,8 +53,8 @@ namespace ams::creport {
         }
 
         void TryCreateReportDirectories() {
-            fs::EnsureDirectory("sdmc:/atmosphere/crash_reports/dumps");
-            fs::EnsureDirectory("sdmc:/atmosphere/fatal_reports/dumps");
+            R_DISCARD(fs::EnsureDirectory("sdmc:/atmosphere/crash_reports/dumps"));
+            R_DISCARD(fs::EnsureDirectory("sdmc:/atmosphere/fatal_reports/dumps"));
         }
 
         constexpr const char *GetDebugExceptionString(const svc::DebugException type) {
@@ -242,7 +244,7 @@ namespace ams::creport {
                 m_result = creport::ResultUserBreak();
                 /* Try to parse out the user break result. */
                 if (hos::GetVersion() >= hos::Version_5_0_0) {
-                    svc::ReadDebugProcessMemory(reinterpret_cast<uintptr_t>(std::addressof(m_result)), m_debug_handle, d.info.exception.specific.user_break.address, sizeof(m_result));
+                    R_DISCARD(svc::ReadDebugProcessMemory(reinterpret_cast<uintptr_t>(std::addressof(m_result)), m_debug_handle, d.info.exception.specific.user_break.address, sizeof(m_result)));
                 }
                 break;
             case svc::DebugException_UndefinedSystemCall:
@@ -287,7 +289,7 @@ namespace ams::creport {
         }
 
         /* Read the dying message. */
-        svc::ReadDebugProcessMemory(reinterpret_cast<uintptr_t>(m_dying_message), m_debug_handle, m_dying_message_address, m_dying_message_size);
+        R_DISCARD(svc::ReadDebugProcessMemory(reinterpret_cast<uintptr_t>(m_dying_message), m_debug_handle, m_dying_message_address, m_dying_message_size));
     }
 
     void CrashReport::SaveReport(bool enable_screenshot) {
@@ -307,7 +309,15 @@ namespace ams::creport {
             /* Save crash report. */
             util::SNPrintf(file_path, sizeof(file_path), "sdmc:/atmosphere/crash_reports/%011lu_%016lx.log", timestamp, m_process_info.program_id);
             {
-                ScopedFile file(file_path);
+                /* Try to allocate data cache. */
+                void * const data_cache = lmem::AllocateFromExpHeap(m_heap_handle, CrashReportDataCacheSize + os::MemoryPageSize);
+                ON_SCOPE_EXIT { if (data_cache != nullptr) { lmem::FreeToExpHeap(m_heap_handle, data_cache); } };
+
+                /* Align up the data cache. This is safe because null will align up to null. */
+                void * const aligned_cache = reinterpret_cast<void *>(util::AlignUp(reinterpret_cast<uintptr_t>(data_cache), os::MemoryPageSize));
+
+                /* Open and save the file using the cache. */
+                ScopedFile file(file_path, aligned_cache, aligned_cache != nullptr ? CrashReportDataCacheSize : 0);
                 if (file.IsOpen()) {
                     this->SaveToFile(file);
                 }
