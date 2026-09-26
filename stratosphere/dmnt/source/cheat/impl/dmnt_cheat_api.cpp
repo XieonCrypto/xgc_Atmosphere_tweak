@@ -23,6 +23,9 @@ namespace ams::dmnt::cheat::impl {
     namespace {
 
         /* Helper definitions. */
+		// from 0x80 to 0x400  (128 to 1024) //ELY M. 
+		//need to increase or the cheats will get cut off....   
+		//testing without this for fw 23... 
         constexpr size_t MaxCheatCount = 0x80;
         constexpr size_t MaxFrozenAddressCount = 0x80;
 
@@ -58,6 +61,7 @@ namespace ams::dmnt::cheat::impl {
         };
 
         constinit os::SdkMutex g_text_file_buffer_lock;
+		//I have to undo my cheat mod here because of eshop crashing on opening.   
         constinit char g_text_file_buffer[64_KB];
 
         constinit u8 g_frozen_address_map_memory[sizeof(FrozenAddressMapEntry) * MaxFrozenAddressCount];
